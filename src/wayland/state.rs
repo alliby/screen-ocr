@@ -42,7 +42,6 @@ pub struct WaylandState {
     pub output_state: OutputState,
     pub shm_state: Shm,
     pub exit: bool,
-    pub first_configure: bool,
     pub layer: LayerSurface,
     pub canvas: Canvas<OpenGl>,
     pub surface: Surface<WindowSurface>,
@@ -51,6 +50,9 @@ pub struct WaylandState {
     pub themed_pointer: Option<ThemedPointer>,
     pub cursor_icon: CursorIcon,
     pub set_cursor: bool,
+    pub scale_factor: f32,
+    pub first_configure: bool,
+    pub redraw: bool,
 }
 
 impl CompositorHandler for WaylandState {
@@ -59,9 +61,9 @@ impl CompositorHandler for WaylandState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _surface: &wl_surface::WlSurface,
-        _new_factor: i32,
+        new_factor: i32,
     ) {
-        // Not needed for this example.
+        self.scale_factor = new_factor as f32;
     }
 
     fn transform_changed(
@@ -71,7 +73,6 @@ impl CompositorHandler for WaylandState {
         _surface: &wl_surface::WlSurface,
         _new_transform: wl_output::Transform,
     ) {
-        // Not needed for this example.
     }
 
     fn frame(
@@ -81,7 +82,10 @@ impl CompositorHandler for WaylandState {
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        self.draw(conn, qh)
+        self.draw();
+        if self.redraw {
+            self.request_draw(conn, qh);
+        }
     }
 }
 
@@ -137,13 +141,12 @@ impl LayerShellHandler for WaylandState {
         if configure.new_size.0 != 0 && configure.new_size.1 != 0 {
             self.app.width = configure.new_size.0;
             self.app.height = configure.new_size.1;
+            // Initiate the first draw.
+            self.draw();
         }
-
-        // Initiate the first draw.
-        if self.first_configure {
-            self.first_configure = false;
-            self.draw(conn, qh);
-        }
+        self.first_configure = false;
+        self.redraw = false;
+        self.request_draw(conn, qh);
     }
 }
 
@@ -274,8 +277,8 @@ impl KeyboardHandler for WaylandState {
 impl PointerHandler for WaylandState {
     fn pointer_frame(
         &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
         _pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
@@ -286,6 +289,7 @@ impl PointerHandler for WaylandState {
                 continue;
             }
             if self.app.start_sel {
+                self.redraw = true;
                 self.app.sel_corners.1 = Some(event.position);
             }
             match event.kind {
@@ -308,6 +312,7 @@ impl PointerHandler for WaylandState {
                 }
                 Release { button, .. } => {
                     self.app.start_sel = false;
+                    self.redraw = false;
                     println!("{:?}", self.app.sel_corners);
                     println!("Release {:x} @ {:?}", button, event.position);
                 }
@@ -324,16 +329,8 @@ impl PointerHandler for WaylandState {
 }
 
 impl WaylandState {
-    pub fn draw(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
-        if self.set_cursor {
-            let _ = self
-                .themed_pointer
-                .as_mut()
-                .unwrap()
-                .set_cursor(conn, self.cursor_icon);
-            self.set_cursor = false;
-        }
-        self.canvas.set_size(self.app.width, self.app.height, 1.0);
+    fn draw(&mut self) {
+        self.canvas.set_size(self.app.width, self.app.height, self.scale_factor);
         self.canvas.clear_rect(
             0,
             0,
@@ -341,24 +338,34 @@ impl WaylandState {
             self.app.height,
             Color::rgba(0, 0, 0, 0),
         );
-
         crate::draw::app(&mut self.canvas, &self.app);
-
         self.surface
             .swap_buffers(&self.context)
             .expect("Could not swap buffers");
+        self.canvas.flush();
+    }
 
-        // Damage the entire window
-        self.layer
-            .wl_surface()
-            .damage_buffer(0, 0, self.app.width as _, self.app.height as _);
+    fn request_draw(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        if self.set_cursor {
+            let Ok(_) = self
+                .themed_pointer
+                .as_mut()
+                .unwrap()
+                .set_cursor(conn, self.cursor_icon) else {
+                return
+            };
+            self.set_cursor = false;
+        }
 
         // Request our next frame
         self.layer
             .wl_surface()
             .frame(qh, self.layer.wl_surface().clone());
 
-        self.canvas.flush();
+        // Damage the entire window
+        self.layer
+            .wl_surface()
+            .damage_buffer(0, 0, self.app.width as _, self.app.height as _);
         self.layer.commit();
     }
 }

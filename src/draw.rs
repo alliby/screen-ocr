@@ -1,6 +1,7 @@
 use crate::app::AppState;
 use femtovg::renderer::OpenGl;
-use femtovg::{Canvas, Color, FillRule, Paint, Path, Solidity, FontId};
+use femtovg::{Canvas, Color, FillRule, FontId, Paint, Path, Solidity};
+use std::f32::consts::PI;
 
 const BACKGROUND_COLOR: Color = Color::rgbaf(0.8, 0.8, 0.8, 0.6);
 
@@ -80,7 +81,7 @@ fn draw_paragraph(
 
 fn draw_spinner(canvas: &mut Canvas<OpenGl>, cx: f32, cy: f32, r: f32, t: f32, color: Color) {
     let a0 = 0.0 + t * 6.0;
-    let a1 = std::f32::consts::PI + t * 6.0;
+    let a1 = PI + t * 6.0;
     let r0 = r;
     let r1 = r * 0.9;
 

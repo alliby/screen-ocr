@@ -1,6 +1,6 @@
 pub mod output;
-pub mod state;
 pub mod screenshot;
+pub mod state;
 
 use crate::app::AppState;
 use state::WaylandState;
@@ -37,8 +37,6 @@ use wayland_client::{globals::registry_queue_init, Connection, Proxy};
 pub fn run() {
     // Connect to the Wayland server
     let conn = Connection::connect_to_env().unwrap();
-    let mut wayland_display_handle = WaylandDisplayHandle::empty();
-    wayland_display_handle.display = conn.backend().display_ptr() as *mut _;
     let (width, height) = output::monitor_size(&conn).unwrap();
     println!("{width} x {height}");
 
@@ -67,6 +65,8 @@ pub fn run() {
     layer.commit();
 
     // Set up the window handle and display handle for glutin
+    let mut wayland_display_handle = WaylandDisplayHandle::empty();
+    wayland_display_handle.display = conn.backend().display_ptr() as *mut _;
     let mut wayland_window_handle = WaylandWindowHandle::empty();
     wayland_window_handle.surface = surface.id().as_ptr() as *mut _;
     let raw_display_handle = RawDisplayHandle::Wayland(wayland_display_handle);
@@ -156,7 +156,6 @@ pub fn run() {
         shm_state,
 
         exit: false,
-        first_configure: true,
         layer,
         canvas,
         surface,
@@ -165,6 +164,9 @@ pub fn run() {
         themed_pointer: None,
         cursor_icon: CursorIcon::Crosshair,
         set_cursor: false,
+        scale_factor: 1.0,
+        first_configure: true,
+        redraw: true,
     };
 
     // Event loop
