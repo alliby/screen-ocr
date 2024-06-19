@@ -1,25 +1,23 @@
+pub mod action;
 pub mod app;
 pub mod draw;
-mod with_winit;
+pub mod render;
+pub mod state;
 
-use glutin::config::Config;
-use glutin::config::GlConfig;
+use app::App;
+use render::RenderState;
+use state::{AppState, WindowState};
+
+use winit::event_loop::{ControlFlow, EventLoop};
 
 fn main() {
-    with_winit::run()
-}
-
-pub fn gl_config_picker(configs: Box<dyn Iterator<Item = Config> + '_>) -> Config {
-    configs
-        .reduce(|accum, config| {
-            let transparency_check = config.supports_transparency().unwrap_or(false)
-                & !accum.supports_transparency().unwrap_or(false);
-
-            if transparency_check || config.num_samples() > accum.num_samples() {
-                config
-            } else {
-                accum
-            }
-        })
-        .unwrap()
+    // create and run the App
+    let event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(ControlFlow::Wait);
+    let mut app = App {
+        app_state: AppState::new(),
+        render_state: RenderState::default(),
+        window_state: WindowState::new(),
+    };
+    event_loop.run_app(&mut app).unwrap();
 }

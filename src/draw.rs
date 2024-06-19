@@ -1,34 +1,47 @@
-use crate::app::AppState;
+use crate::action::Action;
+use crate::state::{AppState, Page, WindowState};
 use femtovg::renderer::OpenGl;
-use femtovg::{Canvas, Color, FillRule, FontId, Paint, Path, Solidity};
+use femtovg::{Align, Baseline, Canvas, Color, FillRule, FontId, Paint, Path, Solidity};
 use std::f32::consts::PI;
 
-const BACKGROUND_COLOR: Color = Color::rgbaf(0.8, 0.8, 0.8, 0.6);
+const BACKGROUND_COLOR: Color = Color::rgbaf(0.01, 0.01, 0.01, 0.4);
 
-pub fn app(canvas: &mut Canvas<OpenGl>, app: &AppState) {
-    let (w, h) = (app.width as f32, app.height as f32);
-    if let (Some((x0, y0)), Some((x1, y1))) = app.sel_corners {
-        draw_selection(canvas, w, h, x0 as _, y0 as _, x1 as _, y1 as _);
-    } else {
-        draw_background(canvas, w, h);
+pub fn app(canvas: &mut Canvas<OpenGl>, app: &AppState, window: &WindowState) -> Action {
+    let (w, h) = (window.width, window.height);
+    match app.current_page {
+        Page::AreaSelect(_) => match app.selected_corners {
+            (Some((x0, y0)), None) => {
+                let (mouse_x, mouse_y) = window.cursor_position;
+                draw_selection(canvas, w, h, x0, y0, mouse_x, mouse_y);
+                return Action::Redraw;
+            }
+            (Some((x0, y0)), Some((x1, y1))) => {
+                draw_selection(canvas, w, h, x0, y0, x1, y1);
+                draw_button(
+                    canvas,
+                    &app.fonts,
+                    "Cancel",
+                    (x1.max(x0) - 110.0, y1.max(y0) + 10.0, 100.0, 50.0),
+                );
+                draw_button(
+                    canvas,
+                    &app.fonts,
+                    "Ok",
+                    (x1.max(x0) - 220.0, y1.max(y0) + 10.0, 100.0, 50.0),
+                );
+            }
+            _ => {
+                draw_button(
+                    canvas,
+                    &app.fonts,
+                    "Exit",
+                    ((w - 200.0) / 2.0, (h + 100.0) / 2.0, 200.0, 100.0),
+                );
+                draw_background(canvas, w, h);
+            }
+        },
     }
-    draw_paragraph(
-        canvas,
-        w / 2.0,
-        h / 2.0,
-        &app.fonts,
-        40.0,
-        "السلام عليكم",
-        Color::white(),
-    );
-    draw_spinner(
-        canvas,
-        w / 2.0,
-        h / 2.0,
-        20.0,
-        app.start.elapsed().as_secs_f32(),
-        Color::white(),
-    );
+    Action::None
 }
 
 fn draw_background(canvas: &mut Canvas<OpenGl>, w: f32, h: f32) {
@@ -39,44 +52,16 @@ fn draw_background(canvas: &mut Canvas<OpenGl>, w: f32, h: f32) {
 }
 
 fn draw_selection(canvas: &mut Canvas<OpenGl>, w: f32, h: f32, x0: f32, y0: f32, x1: f32, y1: f32) {
-    let stroke_paint = Paint::color(Color::black());
+    let stroke_paint = Paint::color(Color::white());
     let fill_paint = Paint::color(BACKGROUND_COLOR).with_fill_rule(FillRule::EvenOdd);
     let mut path = Path::new();
+    let mut stroke_path = Path::new();
     path.rect(0.0, 0.0, w, h);
     path.close();
     path.rect(x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs());
+    stroke_path.rect(x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs());
+    canvas.stroke_path(&stroke_path, &stroke_paint);
     canvas.fill_path(&path, &fill_paint);
-    canvas.stroke_path(&path, &stroke_paint);
-}
-
-fn draw_paragraph(
-    canvas: &mut Canvas<OpenGl>,
-    x: f32,
-    y: f32,
-    font: &[FontId],
-    font_size: f32,
-    text: &str,
-    color: Color,
-) {
-    let mut paint = Paint::color(color);
-
-    paint.set_font(font);
-    paint.set_font_size(font_size);
-
-    let font_metrics = canvas.measure_font(&paint).expect("Error measuring font");
-
-    let width = canvas.width() as f32;
-    let mut y = y;
-
-    let lines = canvas
-        .break_text_vec(width, text, &paint)
-        .expect("Error while breaking text");
-
-    for line_range in lines {
-        if let Ok(_res) = canvas.fill_text(x, y, &text[line_range], &paint) {
-            y += font_metrics.height();
-        }
-    }
 }
 
 fn draw_spinner(canvas: &mut Canvas<OpenGl>, cx: f32, cy: f32, r: f32, t: f32, color: Color) {
@@ -96,4 +81,26 @@ fn draw_spinner(canvas: &mut Canvas<OpenGl>, cx: f32, cy: f32, r: f32, t: f32, c
     canvas.fill_path(&path, &paint);
 
     canvas.restore();
+}
+
+fn draw_button(
+    canvas: &mut Canvas<OpenGl>,
+    fonts: &[FontId],
+    text: &str,
+    (x, y, w, h): (f32, f32, f32, f32),
+) {
+    let bg = Paint::color(Color::black());
+    let mut path = Path::new();
+    path.rounded_rect(x, y, w, h, 5.0);
+    canvas.fill_path(&path, &bg);
+    canvas.stroke_path(
+        &path,
+        &Paint::color(Color::rgb(200, 200, 200)).with_line_width(2.0),
+    );
+    let mut paint = Paint::color(Color::white());
+    paint.set_text_align(Align::Center);
+    paint.set_text_baseline(Baseline::Middle);
+    paint.set_font_size(24.0);
+    paint.set_font(&fonts);
+    let _ = canvas.fill_text(x + w * 0.5, y + h * 0.5, text, &paint);
 }
