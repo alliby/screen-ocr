@@ -1,9 +1,13 @@
+use winit::dpi::LogicalPosition;
 use winit::event_loop::ActiveEventLoop;
 use winit::raw_window_handle::HasWindowHandle;
 use winit::window::{Window, WindowLevel};
 
 #[cfg(target_os = "linux")]
 use winit::platform::x11::WindowAttributesExtX11;
+
+#[cfg(target_os = "windows")]
+use winit::platform::windows::WindowAttributesExtWindows;
 
 use femtovg::renderer::OpenGl;
 use femtovg::Canvas;
@@ -17,12 +21,10 @@ use glutin::surface::{Surface, WindowSurface};
 use glutin_winit::DisplayBuilder;
 use glutin_winit::GlWindow;
 
-#[derive(Default)]
 pub struct RenderState {
-    pub context: Option<PossiblyCurrentContext>,
-    pub surface: Option<Surface<WindowSurface>>,
-    pub canvas: Option<Canvas<OpenGl>>,
-    pub window: Option<Window>,
+    pub context: PossiblyCurrentContext,
+    pub surface: Surface<WindowSurface>,
+    pub canvas: Canvas<OpenGl>,
 }
 
 pub fn initialize_gl(
@@ -40,13 +42,18 @@ pub fn initialize_gl(
 
     let window_attrs = Window::default_attributes()
         .with_window_level(WindowLevel::AlwaysOnTop)
+        // This is a hacky way for windows to mimic a full screen window
+        .with_position(LogicalPosition::new(0.35, 0.35))
         .with_inner_size(screen_size)
-        // .with_transparent(true)
+        .with_transparent(true)
         .with_resizable(false)
         .with_decorations(false);
 
     #[cfg(target_os = "linux")]
     let window_attrs = window_attrs.with_override_redirect(true);
+
+    #[cfg(target_os = "windows")]
+    let window_attrs = window_attrs.with_skip_taskbar(true);
 
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
     let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attrs.clone()));
