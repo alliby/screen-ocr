@@ -1,29 +1,8 @@
-use crate::action::Action;
 use femtovg::FontId;
 use std::time::Instant;
-use winit::window::CursorIcon;
-use winit::event::*;
+use winit::window::{CursorIcon, Window};
 
 type Point = (f32, f32);
-
-#[derive(Debug, Clone)]
-pub struct WindowState {
-    pub cursor_icon: CursorIcon,
-    pub cursor_position: Point,
-    pub width: f32,
-    pub height: f32,
-}
-
-impl WindowState {
-    pub fn new() -> Self {
-        Self {
-            cursor_icon: CursorIcon::Crosshair,
-            cursor_position: (0.0, 0.0),
-            width: 0.0,
-            height: 0.0,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Page {
@@ -31,43 +10,53 @@ pub enum Page {
     AreaSelect(bool),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AppState {
+    pub window: Window,
     pub start_time: Instant,
     pub fonts: Vec<FontId>,
+    pub cursor_position: Point,
+    pub last_press: Option<Point>,
+    pub last_release: Option<Point>,
     pub current_page: Page,
     pub selected_corners: (Option<Point>, Option<Point>),
+    pub cursor_icon: CursorIcon,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(window: Window) -> Self {
+        let size = window.inner_size();
+        let position = (size.width as f32 / 2.0, size.height as f32 / 2.0);
+        window.set_cursor(CursorIcon::Crosshair);
         AppState {
+            window,
             start_time: Instant::now(),
             fonts: Vec::new(),
+            cursor_position: position,
+            last_press: None,
+            last_release: None,
             current_page: Page::AreaSelect(false),
             selected_corners: (None, None),
+            cursor_icon: CursorIcon::Crosshair,
         }
     }
 }
 
-pub fn handle_mouse_input(input: ElementState, window: &WindowState, app: &mut AppState) -> Action {
-    if let ElementState::Pressed = input {
-        match app.current_page {
-            Page::AreaSelect(false) => {
-                app.current_page = Page::AreaSelect(true);
-                app.selected_corners = (Some(window.cursor_position), None);
-                return Action::Redraw;
+pub fn handle_state(state: &mut AppState) {
+    match state.current_page {
+        Page::AreaSelect(false) => {
+            if let Some(cursor_position) = state.last_press {
+                state.current_page = Page::AreaSelect(true);
+                state.selected_corners.0 = Some(cursor_position);
             }
-            _ => {}
+            state.window.request_redraw();
         }
-    } else {
-        match app.current_page {
-            Page::AreaSelect(true) => {
-                app.current_page = Page::AreaSelect(false);
-                app.selected_corners.1 = Some(window.cursor_position);
+        Page::AreaSelect(true) => {
+            if let Some(cursor_position) = state.last_release {
+                state.current_page = Page::AreaSelect(false);
+                state.selected_corners.1 = Some(cursor_position);
+                state.window.request_redraw();
             }
-            _ => {}
         }
     }
-    Action::None
 }

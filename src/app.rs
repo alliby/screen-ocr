@@ -1,90 +1,95 @@
-use crate::action;
 use crate::draw;
 use crate::render;
 use crate::render::RenderState;
 use crate::state;
-use crate::state::{AppState, WindowState};
+use crate::state::AppState;
 
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::window::{CursorIcon, WindowId};
+use winit::window::WindowId;
 
 use femtovg::Color;
 
 use glutin::prelude::*;
 
+#[derive(Default)]
 pub struct App {
-    pub render_state: RenderState,
-    pub app_state: AppState,
-    pub window_state: WindowState,
+    pub render: Option<RenderState>,
+    pub state: Option<AppState>,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let (window, context, surface, mut canvas) = render::initialize_gl(event_loop);
-        window.set_cursor(self.window_state.cursor_icon);
-        let size = window.inner_size();
-        self.window_state.cursor_position = (size.width as f32, size.height as f32);
-        self.app_state.fonts.push(
+        let mut app_state = AppState::new(window);
+        // window.set_cursor(app_state.cursor_icon);
+        app_state.fonts.push(
             canvas
                 .add_font_mem(include_bytes!("../amiri-regular.ttf"))
                 .unwrap(),
         );
-        self.render_state.window = Some(window);
-        self.render_state.context = Some(context);
-        self.render_state.surface = Some(surface);
-        self.render_state.canvas = Some(canvas);
+
+        self.state = Some(app_state);
+        self.render = Some(RenderState {
+            context,
+            surface,
+            canvas,
+        });
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let mut action = action::Action::None;
-        let (Some(window), Some(context), Some(surface), Some(canvas)) = (
-            self.render_state.window.as_mut(),
-            self.render_state.context.as_ref(),
-            self.render_state.surface.as_ref(),
-            self.render_state.canvas.as_mut(),
-        ) else {
+        let (Some(render), Some(mut app_state)) = (self.render.as_mut(), self.state.as_mut())
+        else {
             return;
         };
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
-                let size = window.inner_size();
-                self.window_state.width = size.width as f32;
-                self.window_state.height = size.height as f32;
-                let dpi_factor = window.scale_factor();
+                let size = app_state.window.inner_size();
+                let dpi_factor = app_state.window.scale_factor();
+                let (width, height) = (size.width as u32, size.height as u32);
                 // Make sure the canvas has the right size
-                canvas.set_size(size.width, size.height, dpi_factor as f32);
-                canvas.clear_rect(0, 0, size.width, size.height, Color::rgba(0, 0, 0, 0));
+                render.canvas.set_size(width, height, dpi_factor as f32);
+                render
+                    .canvas
+                    .clear_rect(0, 0, width, height, Color::rgba(0, 0, 0, 0));
+                // handle app state
+                state::handle_state(&mut app_state);
                 // Draw
-                action = draw::app(canvas, &self.app_state, &self.window_state);
+                draw::app(&mut render.canvas, &mut app_state);
                 // Tell renderer to execute all drawing commands
-                canvas.flush();
+                render.canvas.flush();
                 // Notify winit that we're about to submit buffer to the windowing system.
-                window.pre_present_notify();
+                app_state.window.pre_present_notify();
                 // Display what we've just rendered
-                surface
-                    .swap_buffers(context)
+                render
+                    .surface
+                    .swap_buffers(&render.context)
                     .expect("Could not swap buffers");
             }
             WindowEvent::Resized(size) => {
-                surface.resize(
-                    context,
+                render.surface.resize(
+                    &render.context,
                     size.width.try_into().unwrap(),
                     size.height.try_into().unwrap(),
                 );
-                action = action::Action::Redraw;
+                app_state.window.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.window_state.cursor_position = (position.x as f32, position.y as f32);
+                app_state.cursor_position = (position.x as f32, position.y as f32);
             }
-            WindowEvent::MouseInput { state, .. } => {
-                action = state::handle_mouse_input(state, &self.window_state, &mut self.app_state);
-            }
+            WindowEvent::MouseInput { state, .. } => match state {
+                ElementState::Pressed => {
+                    app_state.last_press = Some(app_state.cursor_position);
+                    app_state.last_release = None;
+                }
+                ElementState::Released => {
+                    app_state.last_release = Some(app_state.cursor_position);
+                    app_state.last_press = None;
+                }
+            },
             _ => (),
         }
-
-        action::handle_action(action, self);
     }
 }
