@@ -1,47 +1,82 @@
-use crate::action::Action;
-use crate::state::{AppState, Page, WindowState};
+use crate::state::{AppState, Page};
 use femtovg::renderer::OpenGl;
 use femtovg::{Align, Baseline, Canvas, Color, FillRule, FontId, Paint, Path, Solidity};
 use std::f32::consts::PI;
+use winit::window::CursorIcon;
 
 const BACKGROUND_COLOR: Color = Color::rgbaf(0.01, 0.01, 0.01, 0.4);
 
-pub fn app(canvas: &mut Canvas<OpenGl>, app: &AppState, window: &WindowState) -> Action {
-    let (w, h) = (window.width, window.height);
-    match app.current_page {
-        Page::AreaSelect(_) => match app.selected_corners {
-            (Some((x0, y0)), None) => {
-                let (mouse_x, mouse_y) = window.cursor_position;
-                draw_selection(canvas, w, h, x0, y0, mouse_x, mouse_y);
-                return Action::Redraw;
-            }
-            (Some((x0, y0)), Some((x1, y1))) => {
-                draw_selection(canvas, w, h, x0, y0, x1, y1);
-                draw_button(
-                    canvas,
-                    &app.fonts,
-                    "Cancel",
-                    (x1.max(x0) - 110.0, y1.max(y0) + 10.0, 100.0, 50.0),
-                );
-                draw_button(
-                    canvas,
-                    &app.fonts,
-                    "Ok",
-                    (x1.max(x0) - 220.0, y1.max(y0) + 10.0, 100.0, 50.0),
-                );
-            }
-            _ => {
-                draw_button(
-                    canvas,
-                    &app.fonts,
-                    "Exit",
-                    ((w - 200.0) / 2.0, (h + 100.0) / 2.0, 200.0, 100.0),
-                );
-                draw_background(canvas, w, h);
-            }
-        },
+pub fn app(canvas: &mut Canvas<OpenGl>, state: &mut AppState) {
+    match state.current_page {
+        Page::AreaSelect(_) => draw_area_select_page(canvas, state),
     }
-    Action::None
+}
+
+fn is_cursor_in(cursor_position: (f32, f32), rectangle: (f32, f32, f32, f32)) -> bool {
+    cursor_position.0 > rectangle.0
+        && cursor_position.1 > rectangle.1
+        && cursor_position.0 < rectangle.0 + rectangle.2
+        && cursor_position.1 < rectangle.1 + rectangle.3
+}
+
+fn draw_area_select_page(canvas: &mut Canvas<OpenGl>, state: &mut AppState) {
+    let size = state.window.inner_size();
+    let (w, h) = (size.width as f32, size.height as f32);
+
+    let close_btn_rect = (w - 60.0, 10.0, 50.0, 50.0);
+    let hover = is_cursor_in(state.cursor_position, close_btn_rect);
+    let mut close_btn_color = Color::rgb(46, 46, 46);
+
+    if hover {
+        close_btn_color = Color::rgba(200, 16, 16, 220);
+        state.window.set_cursor(CursorIcon::Pointer);
+    } else {
+        state.window.set_cursor(state.cursor_icon);
+    }
+
+    draw_background(canvas, w, h);
+    draw_close_btn(canvas, close_btn_rect, close_btn_color);
+
+    if hover && state.last_press.is_some() {
+        std::process::exit(0);
+    }
+
+    if let Some((x1, y1)) = state.last_release {
+        let Some((x0, y0)) = state.selected_corners.0 else {
+            return;
+        };
+        draw_selection(canvas, w, h, x0, y0, x1, y1);
+        let ok_rect = (x1.max(x0) - 220.0, y1.max(y0) + 10.0, 100.0, 50.0);
+        let exit_rect = (x1.max(x0) - 110.0, y1.max(y0) + 10.0, 100.0, 50.0);
+        let mut btn_color = Color::rgb(16, 16, 16);
+        if is_cursor_in(state.cursor_position, ok_rect)
+            || is_cursor_in(state.cursor_position, exit_rect)
+        {
+            btn_color.set_alphaf(0.7);
+            state.window.set_cursor(CursorIcon::Pointer);
+        } else {
+            state.window.set_cursor(state.cursor_icon);
+        }
+        draw_button(canvas, &state.fonts, "Cancel", ok_rect, btn_color);
+        draw_button(canvas, &state.fonts, "Ok", exit_rect, btn_color);
+    }
+
+    if let Some((x, y)) = state.last_press {
+        let (mouse_x, mouse_y) = state.cursor_position;
+        draw_selection(canvas, w, h, x, y, mouse_x, mouse_y);
+        state.window.request_redraw();
+    }
+
+}
+
+fn draw_close_btn(canvas: &mut Canvas<OpenGl>, rect: (f32, f32, f32, f32), color: Color) {
+    let mut path = Path::new();
+    let paint = Paint::color(color);
+    let (x, y, w, h) = rect;
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    path.circle(cx, cy, w * 0.5);
+    canvas.fill_path(&path, &paint);
 }
 
 fn draw_background(canvas: &mut Canvas<OpenGl>, w: f32, h: f32) {
@@ -88,19 +123,16 @@ fn draw_button(
     fonts: &[FontId],
     text: &str,
     (x, y, w, h): (f32, f32, f32, f32),
+    color: Color,
 ) {
-    let bg = Paint::color(Color::black());
+    let bg = Paint::color(color);
     let mut path = Path::new();
     path.rounded_rect(x, y, w, h, 5.0);
     canvas.fill_path(&path, &bg);
-    canvas.stroke_path(
-        &path,
-        &Paint::color(Color::rgb(200, 200, 200)).with_line_width(2.0),
-    );
     let mut paint = Paint::color(Color::white());
     paint.set_text_align(Align::Center);
     paint.set_text_baseline(Baseline::Middle);
     paint.set_font_size(24.0);
     paint.set_font(&fonts);
-    let _ = canvas.fill_text(x + w * 0.5, y + h * 0.5, text, &paint);
+    let _ = canvas.fill_text(x + w / 2.0, y + h / 2.0, text, &paint);
 }
