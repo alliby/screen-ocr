@@ -1,18 +1,10 @@
-use winit::dpi::LogicalPosition;
 use winit::event_loop::ActiveEventLoop;
 use winit::raw_window_handle::HasWindowHandle;
-use winit::window::{Window, WindowLevel};
-
-#[cfg(target_os = "linux")]
-use winit::platform::x11::WindowAttributesExtX11;
-
-#[cfg(target_os = "windows")]
-use winit::platform::windows::WindowAttributesExtWindows;
+use winit::window::{Window, WindowAttributes};
 
 use femtovg::renderer::OpenGl;
 use femtovg::Canvas;
 
-use glutin::config::Config;
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext, Version};
 use glutin::display::GetGlDisplay;
@@ -29,36 +21,18 @@ pub struct RenderState {
 
 pub fn initialize_gl(
     event_loop: &ActiveEventLoop,
+    window_attrs: WindowAttributes,
 ) -> (
     Window,
     PossiblyCurrentContext,
     Surface<WindowSurface>,
     Canvas<OpenGl>,
 ) {
-    let screen_size = event_loop
-        .primary_monitor()
-        .map(|monitor| monitor.size())
-        .expect("Cannot get the screen size");
-
-    let window_attrs = Window::default_attributes()
-        .with_window_level(WindowLevel::AlwaysOnTop)
-        // This is a hacky way for windows to mimic a full screen window
-        .with_position(LogicalPosition::new(0.35, 0.35))
-        .with_inner_size(screen_size)
-        .with_transparent(true)
-        .with_resizable(false)
-        .with_decorations(false);
-
-    #[cfg(target_os = "linux")]
-    let window_attrs = window_attrs.with_override_redirect(true);
-
-    #[cfg(target_os = "windows")]
-    let window_attrs = window_attrs.with_skip_taskbar(true);
-
+    let window_attrs = window_attrs.with_visible(false);
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
     let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attrs.clone()));
     let (mut window, gl_config) = display_builder
-        .build(event_loop, template, gl_config_picker)
+        .build(event_loop, template, |mut config| config.next().unwrap())
         .unwrap();
 
     let raw_window_handle = window
@@ -113,21 +87,10 @@ pub fn initialize_gl(
             .expect("Cannot create OpenGl renderer");
 
     let canvas = Canvas::new(renderer).expect("Cannot create the canvas");
+    gl_surface
+        .swap_buffers(&gl_context)
+        .expect("Could not swap buffers");
 
+    window.set_visible(true);
     (window, gl_context, gl_surface, canvas)
-}
-
-fn gl_config_picker(configs: Box<dyn Iterator<Item = Config> + '_>) -> Config {
-    configs
-        .reduce(|accum, config| {
-            let transparency_check = config.supports_transparency().unwrap_or(false)
-                & !accum.supports_transparency().unwrap_or(false);
-
-            if transparency_check || config.num_samples() > accum.num_samples() {
-                config
-            } else {
-                accum
-            }
-        })
-        .unwrap()
 }
