@@ -1,13 +1,34 @@
-use crate::render;
-use crate::render::RenderState;
-use femtovg::FontId;
-use std::time::Instant;
+use crate::app::App;
+use crate::capture;
+use crate::draw::ImageKey;
+use crate::helper::Rectangle;
+use crate::render::{self, RenderState};
+
+use anyhow::Result;
+
+use femtovg::imgref::ImgVec;
+use femtovg::rgb::RGB8;
+use femtovg::ImageFlags;
+
+use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
+use rten::Model;
+
+use std::sync::OnceLock;
+
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{CursorIcon, Window};
-use glutin::context::PossiblyCurrentGlContext;
+
+#[cfg(target_os = "windows")]
+use winit::platform::windows::WindowAttributesExtWindows;
+
+#[cfg(target_os = "linux")]
+use winit::platform::x11::WindowAttributesExtX11;
 
 type Point = (f32, f32);
+
+// this cell is used for the text extraction which happen on other thread
+static CELL: OnceLock<Result<String>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy)]
 pub struct AreaSelectState {
@@ -21,108 +42,148 @@ pub struct AreaConfirmState {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum ImageState {
+    Loaded,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ExtractionState {
+    Extracted,
+    Extracting,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Action {
     AreaSelect(AreaSelectState),
     AreaConfirm(AreaConfirmState),
-    StartScreenshot,
+    GetScreenshot(ImageState),
+    ExtractText(ExtractionState),
 }
 
-#[derive(Debug)]
-pub struct AppState {
-    pub windows: Vec<Window>,
-    pub active_window: usize,
-    pub width: f32,
-    pub height: f32,
-    pub start_time: Instant,
-    pub fonts: Vec<FontId>,
-    pub cursor_position: Point,
-    pub last_press: Option<Point>,
-    pub last_release: Option<Point>,
-    pub action: Action,
-    pub selected_corners: Option<(Point, Point)>,
-    pub cursor_icon: CursorIcon,
-    pub should_exit: bool,
-}
-
-impl AppState {
-    pub fn new(window: Window) -> Self {
-        AppState {
-            windows: vec![window],
-	    active_window: 0,
-            width: 800.0,
-            height: 600.0,
-            start_time: Instant::now(),
-            fonts: Vec::new(),
-            cursor_position: Default::default(),
-            last_press: None,
-            last_release: None,
-            action: Action::AreaSelect(AreaSelectState { start_point: None }),
-            selected_corners: None,
-            cursor_icon: CursorIcon::Crosshair,
-            should_exit: false,
-        }
-    }
-}
-
-pub fn handle_state(
-    app_state: &mut AppState,
-    render_state: &mut RenderState,
-    event_loop: &ActiveEventLoop,
-) {
-    if app_state.should_exit {
+pub fn handle_state(app: &mut App, event_loop: &ActiveEventLoop) {
+    if app.should_exit {
         event_loop.exit();
         return;
     }
-    match app_state.action {
+
+    match app.action {
         Action::AreaSelect(ref mut state) => {
-            if app_state.last_press.is_some() {
-                state.start_point = app_state.last_press;
-                app_state.windows[app_state.active_window].request_redraw();
+            if app.last_press.is_some() {
+                state.start_point = app.last_press;
             }
-            if let Some(cursor_position) = app_state.last_release {
+            if let Some(cursor_position) = app.last_release {
                 let Some(point_1) = state.start_point else {
                     return;
                 };
-                app_state.action = Action::AreaConfirm(AreaConfirmState {
+                app.action = Action::AreaConfirm(AreaConfirmState {
                     confirm: false,
                     corners: (point_1, cursor_position),
                 });
-                app_state.windows[app_state.active_window].request_redraw();
             }
+            app.windows[app.active].request_redraw();
         }
+
         Action::AreaConfirm(AreaConfirmState {
             confirm: true,
             corners,
         }) => {
-            let ((x0, y0), (x1, y1)) = corners;
-            let (x, y, w, h) = (x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs());
-            app_state.width = w;
-            app_state.height = h;
-            app_state.selected_corners = Some(corners);
-            app_state.cursor_icon = CursorIcon::default();
-            app_state.last_press = None;
-            app_state.last_release = None;
-            app_state.action = Action::StartScreenshot;
-	    app_state.active_window = 1;
-	    app_state.windows[0].set_visible(true);
-	    if render_state.context.is_current() {
-		println!("the context for primary window is current");
-	    }
-	    // render_state.context.make_not_current();
-            let window_attrs = Window::default_attributes()
-                .with_position(PhysicalPosition::new(x, y))
-                .with_inner_size(PhysicalSize::new(w, h));
-	    
-	    let (window, context, surface, canvas) =
-		render::initialize_gl(event_loop, window_attrs);
+            // get the rectangle of the selected area
+            let rect = Rectangle::from(corners);
+            // close the selection overlay
+            app.windows[0].set_visible(false);
+            app.active = 1;
+            // Create the new window
+            (app.last_press, app.last_release) = (None, None);
+            (app.width, app.height) = (rect.width, rect.height);
+            app.cursor_icon = CursorIcon::default();
+            let mut window_attrs = Window::default_attributes()
+                .with_decorations(false)
+                .with_position(PhysicalPosition::new(rect.x, rect.y))
+                .with_inner_size(PhysicalSize::new(rect.width, rect.height));
 
-	    render_state.context = context;
-            render_state.surface = surface;
-            render_state.canvas = canvas;
-	    println!("creating new window with id : {:?}", window.id());
-            app_state.windows.push(window);
-            app_state.windows[app_state.active_window].request_redraw();
+            #[cfg(target_os = "windows")]
+            {
+                window_attrs = window_attrs.with_skip_taskbar(true);
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                window_attrs = window_attrs.with_override_redirect(true);
+            }
+
+            let (window, context, surface, mut canvas) =
+                render::initialize_gl(event_loop, window_attrs);
+            // Capture the screen and write the image buffer to the app
+            app.screenshot = capture::capture_screen(rect).ok();
+            // Add the screenshot image to the canvas
+            let img_flags = ImageFlags::empty();
+            let image_state = app
+                .screenshot
+                .as_ref()
+                .map(|bytes| {
+                    let img = bytes.chunks(3).map(|p| RGB8::new(p[0], p[1], p[2]));
+                    let src = ImgVec::new(img.collect(), rect.width as usize, rect.height as usize);
+                    let img_id = canvas.create_image(src.as_ref(), img_flags).unwrap();
+
+                    // Create a new blurry image
+                    let filter = ImageFilter::GaussianBlur { sigma: 20.0 };
+                    let blur_img_id = canvas
+                        .create_image_empty(src.width(), src.height(), PixelFormat::Rgb8, img_flags)
+                        .unwrap();
+                    canvas.filter_image(blur_img_id, filter, img_id);
+
+                    app.img_ids.insert(ImageKey::Screenshot, img_id);
+                    app.img_ids.insert(ImageKey::BluredScreen, blur_img_id);
+                    ImageState::Loaded
+                })
+                .unwrap_or(ImageState::Error);
+            app.action = Action::GetScreenshot(image_state);
+            // Add the new RenderState to the app
+            app.render.push(RenderState {
+                context,
+                surface,
+                canvas,
+            });
+            app.windows.push(window);
+            app.windows[app.active].request_redraw();
         }
-        _ => app_state.windows[app_state.active_window].request_redraw(),
+
+        Action::GetScreenshot(ImageState::Loaded) => {
+            let canvas = &app.render[app.active].canvas;
+            let img_id = app.img_ids[&ImageKey::Screenshot];
+            let img_dim = canvas.image_size(img_id).unwrap();
+            let img_dim = (img_dim.0 as u32, img_dim.1 as u32);
+            let img_buff = app.screenshot.as_ref().cloned().unwrap();
+            app.action = Action::ExtractText(ExtractionState::Extracting);
+            std::thread::spawn(move || {
+                let detection_model = Model::load_file("text-detection.rten").unwrap();
+                let recognition_model = Model::load_file("text-recognition.rten").unwrap();
+                let engine = OcrEngine::new(OcrEngineParams {
+                    detection_model: Some(detection_model),
+                    recognition_model: Some(recognition_model),
+                    ..Default::default()
+                })
+                .unwrap();
+                let img_source = ImageSource::from_bytes(&img_buff[..], img_dim).unwrap();
+                let ocr_input = engine.prepare_input(img_source).unwrap();
+                CELL.set(engine.get_text(&ocr_input)).unwrap();
+            });
+        }
+
+        Action::ExtractText(ref mut state) => match CELL.get() {
+            Some(Ok(extracted_text)) => {
+                app.extracted_text = Some(extracted_text.clone());
+                *state = ExtractionState::Extracted;
+                app.windows[app.active].request_redraw();
+            }
+            Some(Err(_)) => *state = ExtractionState::Error,
+            None => {
+                *state = ExtractionState::Extracting;
+                app.windows[app.active].request_redraw();
+            }
+        },
+        _ => app.windows[app.active].request_redraw(),
     }
 }
