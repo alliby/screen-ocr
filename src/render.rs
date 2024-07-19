@@ -5,7 +5,7 @@ use winit::window::{Window, WindowAttributes};
 use femtovg::renderer::OpenGl;
 use femtovg::Canvas;
 
-use glutin::config::ConfigTemplateBuilder;
+use glutin::config::{Config, ConfigTemplateBuilder};
 use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext, Version};
 use glutin::display::GetGlDisplay;
 use glutin::prelude::*;
@@ -32,7 +32,7 @@ pub fn initialize_gl(
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
     let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attrs.clone()));
     let (mut window, gl_config) = display_builder
-        .build(event_loop, template, |mut config| config.next().unwrap())
+        .build(event_loop, template, config_picker)
         .unwrap();
 
     let raw_window_handle = window
@@ -77,11 +77,13 @@ pub fn initialize_gl(
             .create_window_surface(&gl_config, &attrs)
             .unwrap()
     };
+
     let gl_context = not_current_gl_context
         .take()
         .unwrap()
         .make_current(&gl_surface)
         .unwrap();
+
     let renderer =
         unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s) as *const _) }
             .expect("Cannot create OpenGl renderer");
@@ -93,4 +95,25 @@ pub fn initialize_gl(
 
     window.set_visible(true);
     (window, gl_context, gl_surface, canvas)
+}
+
+#[cfg(target_os = "windows")]
+fn config_picker(mut configs: Box<dyn Iterator<Item = Config> + '_>) -> Config {
+    configs.next().unwrap()
+}
+
+#[cfg(target_os = "linux")]
+fn config_picker(configs: Box<dyn Iterator<Item = Config> + '_>) -> Config {
+    configs
+        .reduce(|accum, config| {
+            let transparency_check = config.supports_transparency().unwrap_or(false)
+                & !accum.supports_transparency().unwrap_or(false);
+
+            if transparency_check || config.num_samples() > accum.num_samples() {
+                config
+            } else {
+                accum
+            }
+        })
+        .unwrap()
 }

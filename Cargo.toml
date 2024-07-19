@@ -1,5 +1,5 @@
 [package]
-name = "trans-screen"
+name = "screen-ocr"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,6 +10,7 @@ glutin = { version = "0.32" }
 glutin-winit = { version = "0.5.0" }
 ocrs = "0.8.0"
 rten = "0.10.0"
+rten-imageproc = "0.10.0"
 winit = { version = "0.30.0", features = ["rwh_06"]}
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -28,3 +29,8 @@ opt-level = 3
 
 [profile.dev.package.rten]
 opt-level = 3
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

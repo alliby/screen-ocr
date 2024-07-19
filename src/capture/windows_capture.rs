@@ -1,7 +1,7 @@
 use crate::helper::Rectangle;
 use windows::Win32::{Foundation::*, Graphics::Gdi::*};
 
-pub fn capture_screen(rect: Rectangle) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn screen_rect(rect: Rectangle) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     unsafe {
         // Get the device context handle of the screen
         let h_screen = GetDC(HWND(0));

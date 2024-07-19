@@ -12,6 +12,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{CursorIcon, Window, WindowId, WindowLevel};
 
+use rten_imageproc::RotatedRect;
 use femtovg::{Color, FontId, ImageId};
 use glutin::prelude::*;
 
@@ -33,7 +34,7 @@ pub struct App {
     pub last_press: Option<Point>,
     pub last_release: Option<Point>,
     pub screenshot: Option<Vec<u8>>,
-    pub extracted_text: Option<String>,
+    pub line_rects: Vec<(Vec<RotatedRect>, String)>,
     pub action: Action,
     pub cursor_icon: CursorIcon,
     pub should_exit: bool,
@@ -54,7 +55,7 @@ impl App {
             last_press: None,
             last_release: None,
             screenshot: None,
-            extracted_text: None,
+	    line_rects: Vec::new(),
             action: Action::AreaSelect(AreaSelectState { start_point: None }),
             cursor_icon: CursorIcon::Crosshair,
             should_exit: false,

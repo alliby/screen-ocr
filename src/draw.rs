@@ -18,21 +18,9 @@ pub enum ImageKey {
 pub fn app(app: &mut App) {
     match app.action {
         Action::AreaSelect(state) => draw_area_select(app, &state),
-        Action::AreaConfirm(mut state) => draw_area_confirm(app, &mut state),
-        Action::ExtractText(ExtractionState::Extracting) => {
-            let canvas = &mut app.render[app.active].canvas;
-	    let blur_img_id = app.img_ids[&ImageKey::BluredScreen];
-            let (w, h) = (app.width, app.height);
-            let t = app.start_time.elapsed().as_secs_f32();
-            draw_image(canvas, blur_img_id, (0.0, 0.0, w, h));
-            draw_spinner(canvas, w / 2.0, h / 2.0, 30.0, t, Color::white());
-        }
-        Action::ExtractText(ExtractionState::Extracted) => {
-            let canvas = &mut app.render[app.active].canvas;
-            let img_id = app.img_ids[&ImageKey::Screenshot];
-            let (w, h) = (app.width, app.height);
-            draw_image(canvas, img_id, (0.0, 0.0, w, h));
-        }
+        Action::AreaConfirm(state) => draw_area_confirm(app, &state),
+        Action::ExtractText(ExtractionState::Extracting) => draw_extract_loading(app),
+        Action::ExtractText(ExtractionState::Extracted) => draw_extract_text(app),
         _ => {}
     }
 }
@@ -64,13 +52,13 @@ fn draw_area_select(app: &mut App, state: &AreaSelectState) {
         let (mouse_x, mouse_y) = app.cursor_position;
         draw_selection(canvas, w, h, (x0, y0), (mouse_x, mouse_y));
     } else {
-        draw_background(canvas, w, h);
-        draw_round_btn(canvas, close_rect, close_btn_color);
+        draw_rect(canvas, w, h, BACKGROUND_COLOR);
+        draw_circle(canvas, close_rect, close_btn_color);
         app.windows[app.active].set_cursor(cursor_icon);
     }
 }
 
-fn draw_area_confirm(app: &mut App, state: &mut AreaConfirmState) {
+fn draw_area_confirm(app: &mut App, state: &AreaConfirmState) {
     let canvas = &mut app.render[app.active].canvas;
     let (w, h) = (app.width, app.height);
     let ((x0, y0), (x1, y1)) = state.corners;
@@ -115,7 +103,7 @@ fn draw_area_confirm(app: &mut App, state: &mut AreaConfirmState) {
             };
             app.last_press = Some(start_point);
         }
-        draw_round_btn(canvas, btn_rect, Color::white());
+        draw_circle(canvas, btn_rect, Color::white());
     }
 
     if ok_btn_hover && mouse_click {
@@ -135,7 +123,56 @@ fn draw_area_confirm(app: &mut App, state: &mut AreaConfirmState) {
     app.windows[app.active].set_cursor(cursor_icon);
 }
 
-fn draw_round_btn(canvas: &mut Canvas<OpenGl>, rect: impl Into<Rectangle>, color: Color) {
+fn draw_extract_loading(app: &mut App) {
+    let canvas = &mut app.render[app.active].canvas;
+    let blur_img_id = app.img_ids[&ImageKey::BluredScreen];
+    let Ok((img_w, img_h)) = canvas.image_size(blur_img_id) else {
+        return;
+    };
+    let (w, h) = (app.width, app.height);
+    let offset_x = (w - img_w as f32) / 2.0;
+    let offset_y = (h - img_h as f32) / 2.0;
+    let t = app.start_time.elapsed().as_secs_f32();
+    draw_image(
+        canvas,
+        blur_img_id,
+        (offset_x, offset_y, img_w as f32, img_h as f32),
+    );
+    draw_spinner(canvas, w / 2.0, h / 2.0, 30.0, t, Color::white());
+}
+
+fn draw_extract_text(app: &mut App) {
+    let canvas = &mut app.render[app.active].canvas;
+    let img_id = app.img_ids[&ImageKey::Screenshot];
+    let (w, h) = (app.width, app.height);
+    let Ok((img_w, img_h)) = canvas.image_size(img_id) else {
+        return;
+    };
+    let offset_x = (w - img_w as f32) / 2.0;
+    let offset_y = (h - img_h as f32) / 2.0;
+    draw_image(
+        canvas,
+        img_id,
+        (offset_x, offset_y, img_w as f32, img_h as f32),
+    );
+    let color = Color::rgba(0, 120, 215, 120);
+    for collection in &app.line_rects {
+        for rotated_rect in &collection.0 {
+            let c = rotated_rect.corners();
+            let corners = std::array::from_fn(|i| (offset_x + c[i].x, offset_y + c[i].y));
+            draw_rotated_rect(canvas, corners, color);
+        }
+    }
+}
+
+fn draw_rect(canvas: &mut Canvas<OpenGl>, w: f32, h: f32, color: Color) {
+    let paint = Paint::color(color);
+    let mut path = Path::new();
+    path.rect(0.0, 0.0, w, h);
+    canvas.fill_path(&path, &paint);
+}
+
+fn draw_circle(canvas: &mut Canvas<OpenGl>, rect: impl Into<Rectangle>, color: Color) {
     let rect = rect.into();
     let mut path = Path::new();
     let paint = Paint::color(color);
@@ -145,10 +182,15 @@ fn draw_round_btn(canvas: &mut Canvas<OpenGl>, rect: impl Into<Rectangle>, color
     canvas.fill_path(&path, &paint);
 }
 
-fn draw_background(canvas: &mut Canvas<OpenGl>, w: f32, h: f32) {
-    let paint = Paint::color(BACKGROUND_COLOR);
+fn draw_rotated_rect(canvas: &mut Canvas<OpenGl>, corners: [(f32, f32); 4], color: Color) {
     let mut path = Path::new();
-    path.rect(0.0, 0.0, w, h);
+    let paint = Paint::color(color);
+    let [(x0, y0), (x1, y1), (x2, y2), (x3, y3)] = corners;
+    path.move_to(x0, y0);
+    for (x, y) in [(x1, y1), (x2, y2), (x3, y3), (x0, y0)] {
+        path.line_to(x, y);
+    }
+    path.close();
     canvas.fill_path(&path, &paint);
 }
 
