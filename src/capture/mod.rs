@@ -1,11 +1,9 @@
 #[cfg(target_os = "windows")]
 mod windows_capture;
-
-#[cfg(target_os = "linux")]
-mod x11_capture;
-
 #[cfg(target_os = "windows")]
 pub use windows_capture::*;
 
+#[cfg(target_os = "linux")]
+mod x11_capture;
 #[cfg(target_os = "linux")]
 pub use x11_capture::*;
