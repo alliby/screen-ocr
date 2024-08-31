@@ -95,41 +95,28 @@ impl<'s> ApplicationHandler for App<'s> {
             self.state.damaged = false;
         }
 
-        if self.state.switch_windows {
-            if let PageData::TextExtract {
-                ref mut window_created,
-                ref mut screen_captured,
-		ref mut blob,
-                rect,
-                ..
-            } = self.state.page_data
-            {
-                if *screen_captured {
-                    let window = Arc::new(create_main_window(event_loop));
-                    let surface = create_vello_surface(window.clone(), &mut self.context);
-		    window.set_visible(true);
-		    window.set_decorations(true);
-
-                    self.surfaces.push(surface);
-                    self.windows.push(window.clone());
-                    self.active = EXTRACT_WINDOW;
-                    self.state.switch_windows = false;
-                }
-                if *window_created {
-                    *blob = capture::screen_rect(rect).unwrap();
-                    *screen_captured = true;
-                } else {
-                    self.windows[OVERLAY_WINDOW].set_visible(false);
-                    *window_created = true;
-                }
-            }
-        }
-
         if self.windows[self.active].id() != window_id {
             return;
         }
 
-        let window = &mut self.windows[self.active];
+        if let PageData::TextExtract(ref mut page_data) = *self.state.page_data {
+            if page_data.window_cleared && !page_data.window_created {
+                // Capture the screen after clearing the overlay
+                page_data.blob = capture::screen_rect(page_data.rect).unwrap();
+                let dim = (page_data.rect.width().abs() as u32, page_data.rect.height().abs() as u32);
+                let img_blob = page_data.blob.clone();
+                std::thread::spawn(move || extract_text(img_blob, dim));
+                // Create a new window
+                self.windows[OVERLAY_WINDOW].set_visible(false);
+                let window = Arc::new(create_main_window(event_loop));
+                let surface = create_vello_surface(window.clone(), &mut self.context);
+                self.surfaces.push(surface);
+                self.windows.push(window.clone());
+                self.active = EXTRACT_WINDOW;
+                page_data.window_created = true;
+            }
+        }
+
         let surface = &mut self.surfaces[self.active];
 
         match event {
@@ -137,14 +124,13 @@ impl<'s> ApplicationHandler for App<'s> {
 
             // Resize the surface when the window is resized
             WindowEvent::Resized(size) => {
-                self.state.screen_width = size.width as f64;
-                self.state.screen_height = size.height as f64;
-                self.context.resize_surface(
-                    surface,
-                    size.width,
-                    size.height,
-                );
-                window.request_redraw();
+                if size != Default::default() {
+                    self.state.screen_width = size.width as f64;
+                    self.state.screen_height = size.height as f64;
+                    self.context
+                        .resize_surface(surface, size.width, size.height);
+                    self.windows[self.active].request_redraw();
+                }
             }
 
             WindowEvent::RedrawRequested => {
@@ -199,10 +185,10 @@ impl<'s> ApplicationHandler for App<'s> {
                     let hover = elm.bound.abs().contains(mouse);
                     elm.mouse_enter = hover;
                     if (hover && !entered) || (!hover && entered) {
-                        window.request_redraw();
+                        self.windows[self.active].request_redraw();
                     }
                     if hover {
-                        window.set_cursor(elm.cursor);
+                        self.windows[self.active].set_cursor(elm.cursor);
                         break;
                     }
                 }
@@ -213,8 +199,8 @@ impl<'s> ApplicationHandler for App<'s> {
                     let elem = &mut self.view.elems[i];
                     if elem.mouse_enter && elem.active {
                         elem.mouse_press = state.is_pressed();
-                        (self.callbacks[i])(&mut self.state, &mut self.view);
-                        window.request_redraw();
+                        (self.callback(i))(&mut self.state, &mut self.view, i);
+                        self.windows[self.active].request_redraw();
                         break;
                     }
                 }
@@ -224,7 +210,7 @@ impl<'s> ApplicationHandler for App<'s> {
 
         // redraw if draw or state callbacks request that
         if self.state.redraw {
-            window.request_redraw();
+            self.windows[self.active].request_redraw();
             self.state.redraw = false;
         }
     }
@@ -232,11 +218,8 @@ impl<'s> ApplicationHandler for App<'s> {
 
 fn create_main_window(event_loop: &ActiveEventLoop) -> Window {
     let attr = Window::default_attributes()
-        .with_visible(false)
-        .with_transparent(true)
-	.with_decorations(false)
         .with_window_level(WindowLevel::AlwaysOnTop)
-	.with_min_inner_size(PhysicalSize::new(400.0, 100.0))
+        .with_min_inner_size(PhysicalSize::new(400.0, 100.0))
         .with_title("Screen OCR");
 
     event_loop.create_window(attr).unwrap()
@@ -273,7 +256,7 @@ fn create_overlay_window(event_loop: &ActiveEventLoop) -> Window {
             screen_size.width as f32 + 1.0,
             screen_size.height as f32 + 1.0,
         );
-        attr = attr.with_inner_size(screen_size).with_skip_taskbar(false);
+        attr = attr.with_inner_size(screen_size).with_skip_taskbar(true);
     }
 
     event_loop.create_window(attr).unwrap()

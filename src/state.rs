@@ -1,12 +1,18 @@
-use std::time::Instant;
-use std::sync::Arc;
+use crate::scenes::RotatedRect;
+
 use vello::kurbo::{Point, Rect};
 use vello::peniko::Blob;
 use vello::Scene;
+
+use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
+use rten::Model;
+
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
 use winit::window::CursorIcon;
 
 // elements indices
-
 // Area Select elements
 pub const FULL_SCREEN_OVERLAY: usize = 0;
 pub const SELECTED_RECT: usize = 1;
@@ -15,6 +21,9 @@ pub const TOP_LEFT_BTN: usize = 3;
 pub const TOP_RIGHT_BTN: usize = 4;
 pub const BOTTOM_RIGHT_BTN: usize = 5;
 pub const BOTTOM_LEFT_BTN: usize = 6;
+
+// Text Extraction elements
+pub static EXTRACTED_ELEMS: Mutex<Option<(Vec<RotatedRect>, String)>> = Mutex::new(None);
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct ViewElement {
@@ -35,56 +44,62 @@ pub struct View {
 #[derive(Default, Clone)]
 pub struct AppState {
     pub page: Page,
-    pub page_data: PageData,
-    pub should_exit: bool,
+    pub page_data: Box<PageData>,
     pub redraw: bool,
     pub damaged: bool,
-    pub switch_windows: bool,
+    pub should_exit: bool,
     pub screen_width: f64,
     pub screen_height: f64,
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, PartialEq)]
 pub enum Page {
     #[default]
     AreaSelect,
     TextExtract,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct AreaSelectData {
+    pub grab: Option<Point>,
+    pub resize: Option<usize>,
+    pub rect: Rect
+}
+
+#[derive(Debug, Clone)]
+pub struct TextExtractData {
+    pub rect: Rect,
+    pub time: Instant,
+    pub extracted: bool,
+    pub window_cleared: bool,
+    pub window_created: bool,
+    pub text: String,
+    pub rotated_rects: Vec<RotatedRect>,
+    pub blob: Blob<u8>,
+}
+
 #[derive(Debug, Clone)]
 pub enum PageData {
-    AreaSelect {
-        grab: Option<Point>,
-        resize: Option<usize>,
-        rect: Rect,
-    },
-    TextExtract {
-	rect: Rect,
-        time: Instant,
-	window_created: bool,
-	screen_captured: bool,
-	blob: Blob<u8>
-    },
+    AreaSelect(AreaSelectData),
+    TextExtract(TextExtractData)
 }
 
 impl Default for PageData {
     fn default() -> Self {
-        Self::AreaSelect {
-            grab: None,
-            resize: None,
-            rect: Rect::ZERO,
-        }
+        Self::AreaSelect(AreaSelectData::default())
     }
 }
 
 impl AppState {
-    pub fn callbacks(&self) -> Vec<fn(&mut AppState, &mut View)> {
+    pub fn callbacks(&self) -> Vec<fn(&mut AppState, &mut View, usize)> {
         match self.page {
-            Page::AreaSelect => vec![
+            Page::AreaSelect => {
+                let mut callbacks: Vec<fn(&mut AppState, &mut View, usize)> = vec![];
+
                 // the full screen overlay
-                |state, view| {
+                callbacks.push(|state, view, _| {
                     let mouse = view.mouse_position;
-                    let PageData::AreaSelect { ref mut rect, .. } = state.page_data else {
+                    let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
                         return;
                     };
                     // if no press the second call is for the mouse released
@@ -99,167 +114,125 @@ impl AppState {
                     } else {
                         view.elems[CONFIRM_BTN].active = true;
                         view.elems[SELECTED_RECT].active = true;
-                        *rect = view.elems[SELECTED_RECT].bound;
+                        page_data.rect = view.elems[SELECTED_RECT].bound;
                         for i in SELECTED_RECT..=BOTTOM_LEFT_BTN {
                             view.elems[i].active = true;
                         }
                     }
-                },
+                });
+
                 // for the selected rect
-                |state, view| {
+                callbacks.push(|state, view, _| {
                     let mouse = view.mouse_position;
-                    let PageData::AreaSelect {
-                        ref mut grab,
-                        ref mut rect,
-                        ..
-                    } = state.page_data
-                    else {
+                    let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
                         return;
                     };
 
-                    if grab.is_none() {
-                        *grab = Some(mouse);
+                    if page_data.grab.is_none() {
+                        page_data.grab = Some(mouse);
                     } else {
-                        *grab = None;
-                        *rect = view.elems[SELECTED_RECT].bound;
+                        page_data.grab = None;
+                        page_data.rect = view.elems[SELECTED_RECT].bound;
                     }
-                },
+                });
 
-		// for the confirm button
-                |state, _| {
-                    let PageData::AreaSelect { rect, .. } = state.page_data else {
+                // for the confirm button
+                callbacks.push(|state, _, _| {
+                    let PageData::AreaSelect(ref page_data) = *state.page_data else {
                         return;
                     };
                     state.damaged = true;
-		    state.switch_windows = true;
+                    state.redraw = true;
                     state.page = Page::TextExtract;
-                    state.page_data = PageData::TextExtract {
-			rect,
-			time: Instant::now(),
-			blob: Blob::new(Arc::new([])),
-			window_created: false,
-			screen_captured: false,
-                    };
-                },
+                    state.page_data = Box::new(PageData::TextExtract(TextExtractData {
+                        rect: page_data.rect,
+                        time: Instant::now(),
+                        window_cleared: false,
+                        window_created: false,
+			rotated_rects: Vec::new(),
+			text: String::new(),
+                        extracted: false,
+                        blob: Blob::new(Arc::new([])),
+                    }));
+                });
 
                 // Resize Buttons Callbacks
-                |state, view| {
-                    let PageData::AreaSelect {
-                        ref mut resize,
-                        ref mut rect,
-                        ..
-                    } = state.page_data
-                    else {
-                        return;
-                    };
+                for _ in TOP_LEFT_BTN..=BOTTOM_LEFT_BTN {
+                    callbacks.push(|state, view, index| {
+			let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
+                            return;
+			};
 
-                    if resize.is_none() {
-                        *resize = Some(TOP_LEFT_BTN);
-                    } else {
-                        *resize = None;
-                        *rect = view.elems[SELECTED_RECT].bound;
-                    }
-                },
-                |state, view| {
-                    let PageData::AreaSelect {
-                        ref mut resize,
-                        ref mut rect,
-                        ..
-                    } = state.page_data
-                    else {
-                        return;
-                    };
-
-                    if resize.is_none() {
-                        *resize = Some(TOP_RIGHT_BTN);
-                    } else {
-                        *resize = None;
-                        *rect = view.elems[SELECTED_RECT].bound;
-                    }
-                },
-                |state, view| {
-                    let PageData::AreaSelect {
-                        ref mut resize,
-                        ref mut rect,
-                        ..
-                    } = state.page_data
-                    else {
-                        return;
-                    };
-
-                    if resize.is_none() {
-                        *resize = Some(BOTTOM_RIGHT_BTN);
-                    } else {
-                        *resize = None;
-                        *rect = view.elems[SELECTED_RECT].bound;
-                    }
-                },
-                |state, view| {
-                    let PageData::AreaSelect {
-                        ref mut resize,
-                        ref mut rect,
-                        ..
-                    } = state.page_data
-                    else {
-                        return;
-                    };
-
-                    if resize.is_none() {
-                        *resize = Some(BOTTOM_LEFT_BTN);
-                    } else {
-                        *resize = None;
-                        *rect = view.elems[SELECTED_RECT].bound;
-                    }
-                },
-            ],
-
-            Page::TextExtract => vec![],
+                        if page_data.resize.is_none() {
+                            page_data.resize = Some(index);
+                        } else {
+                            page_data.resize = None;
+                            page_data.rect = view.elems[SELECTED_RECT].bound;
+                        }
+                    });
+                }
+                // return the callbacks vec
+                callbacks
+            }
+            Page::TextExtract => vec![
+		|_, _, index| {
+		    println!("input on {index}");
+		}
+	    ],
         }
     }
 
     pub fn view_elements(&self) -> Vec<ViewElement> {
         match self.page {
-            Page::AreaSelect => vec![
+            Page::AreaSelect => {
+                let mut views = vec![];
                 // full screen overlay
-                ViewElement {
+                views.push(ViewElement {
                     cursor: CursorIcon::Crosshair,
                     bound: Rect::new(0.0, 0.0, self.screen_width, self.screen_height),
                     active: true,
                     ..Default::default()
-                },
+                });
                 // Selected Rectangle
-                ViewElement {
+                views.push(ViewElement {
                     cursor: CursorIcon::Grab,
                     ..Default::default()
-                },
-                // Confirm Button
-                ViewElement {
-                    cursor: CursorIcon::Pointer,
-                    ..Default::default()
-                },
-                // Top Left Button
-                ViewElement {
-                    cursor: CursorIcon::Pointer,
-                    ..Default::default()
-                },
-                // Top Right Button
-                ViewElement {
-                    cursor: CursorIcon::Pointer,
-                    ..Default::default()
-                },
-                // Bottom Right Button
-                ViewElement {
-                    cursor: CursorIcon::Pointer,
-                    ..Default::default()
-                },
-                // Bottom Left Button
-                ViewElement {
-                    cursor: CursorIcon::Pointer,
-                    ..Default::default()
-                },
-            ],
-
+                });
+                // push the remaining elements (confirm button + resize buttons)
+                for _ in CONFIRM_BTN..=BOTTOM_RIGHT_BTN + 1 {
+                    views.push(ViewElement {
+                        cursor: CursorIcon::Pointer,
+                        ..Default::default()
+                    });
+                }
+                // return the views vec
+                views
+            }
             Page::TextExtract => vec![],
         }
     }
+}
+
+// Extract Text from image bytes and write it to the global Cell
+pub fn extract_text(blob: Blob<u8>, dimensions: (u32, u32)) {
+    let detection_model = Model::load_file("assets/text-detection.rten").unwrap();
+    let recognition_model = Model::load_file("assets/text-recognition.rten").unwrap();
+    let engine = OcrEngine::new(OcrEngineParams {
+        detection_model: Some(detection_model),
+        recognition_model: Some(recognition_model),
+        ..Default::default()
+    })
+    .unwrap();
+    let img_source = ImageSource::from_bytes(blob.data(), dimensions).unwrap();
+    let ocr_input = engine.prepare_input(img_source).unwrap();
+    let word_rects = engine.detect_words(&ocr_input).unwrap();
+    // sort the words in lines and then flatten the lines into words again
+    let rects = engine
+        .find_text_lines(&ocr_input, &word_rects)
+        .into_iter()
+        .flatten()
+        .map(RotatedRect::from);
+    let text = engine.get_text(&ocr_input).unwrap();
+    let mut extracted = EXTRACTED_ELEMS.lock().unwrap();
+    *extracted = Some((rects.collect(), text));
 }

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+copypasta = "0.10.1"
 ocrs = "0.8.0"
 pollster = "0.3.0"
 rten = "0.10.0"

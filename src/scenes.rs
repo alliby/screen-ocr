@@ -2,13 +2,17 @@ use crate::state::*;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
+use copypasta::{ClipboardContext, ClipboardProvider};
+
 use vello::glyph::Glyph;
-use vello::kurbo::{Affine, CircleSegment, Rect, Stroke};
+use vello::kurbo::{Affine, CircleSegment, PathEl, Point, Rect, Stroke, TranslateScale};
 use vello::peniko::{Blob, Color, Fill, Font, Format::*, Image};
 use vello::skrifa::instance::LocationRef;
 use vello::skrifa::raw::FontRef;
 use vello::skrifa::MetadataProvider;
 use vello::Scene;
+
+use winit::window::CursorIcon;
 
 const ROBOTO_FONT: &[u8] = include_bytes!("../assets/Roboto-Regular.ttf");
 
@@ -17,10 +21,7 @@ pub fn draw(state: &mut AppState, view: &mut View) {
     match state.page {
         Page::AreaSelect => {
             let mouse = view.mouse_position;
-            let PageData::AreaSelect {
-                grab, rect, resize, ..
-            } = state.page_data
-            else {
+            let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
                 return;
             };
 
@@ -28,18 +29,17 @@ pub fn draw(state: &mut AppState, view: &mut View) {
                 state.redraw = true;
                 view.elems[SELECTED_RECT].bound.x1 = mouse.x;
                 view.elems[SELECTED_RECT].bound.y1 = mouse.y;
-                view.elems[SELECTED_RECT].bound = view.elems[SELECTED_RECT].bound;
             }
 
             // move the selected rectangle when dragged
-            if let Some(point) = grab {
+            if let Some(point) = page_data.grab {
                 state.redraw = true;
-                let translate = rect + (mouse - point);
+                let translate = page_data.rect + (mouse - point);
                 view.elems[SELECTED_RECT].bound = translate;
             }
 
             // resize the selected rectangle
-            if let Some(index) = resize {
+            if let Some(index) = page_data.resize {
                 state.redraw = true;
                 if index == TOP_LEFT_BTN {
                     view.elems[SELECTED_RECT].bound.x0 = mouse.x;
@@ -91,7 +91,7 @@ pub fn draw(state: &mut AppState, view: &mut View) {
             // define the confirm button bound
             if view.elems[FULL_SCREEN_OVERLAY].mouse_press
                 || view.elems[SELECTED_RECT..].iter().any(|v| v.mouse_press)
-                || resize.is_some()
+                || page_data.resize.is_some()
             {
                 let x = view.elems[SELECTED_RECT].bound.max_x();
                 let y = view.elems[SELECTED_RECT].bound.max_y();
@@ -108,42 +108,103 @@ pub fn draw(state: &mut AppState, view: &mut View) {
                 view.elems[FULL_SCREEN_OVERLAY].bound,
                 Color::rgba8(16, 16, 16, 75),
             );
-            if view.elems[SELECTED_RECT].bound.width().abs() >= 100.0
+            if view.elems[SELECTED_RECT].bound.width().abs() >= 50.0
                 && view.elems[SELECTED_RECT].bound.height().abs() >= 40.0
             {
                 confirm_btn(scene, view.elems[CONFIRM_BTN]);
             }
-            selection_rect(scene, view.elems[SELECTED_RECT].bound);
+            area_selection_rect(scene, view.elems[SELECTED_RECT].bound);
         }
 
         Page::TextExtract => {
-            let screen_rect = Rect::new(0.0, 0.0, state.screen_width, state.screen_height);
-            let PageData::TextExtract {
-                time,
-                ref blob,
-		window_created,
-                screen_captured,
-                rect,
-            } = state.page_data
-            else {
+            let PageData::TextExtract(ref mut page_data) = *state.page_data else {
                 return;
             };
+            let screen_rect = Rect::new(0.0, 0.0, state.screen_width, state.screen_height);
 
-	    if !window_created {
-		return;
-	    }
-	    
-            if screen_captured {
-                state.redraw = true;
-                let image = Image::new(
-                    blob.clone(),
-                    Rgba8,
-                    rect.width().abs() as u32,
-                    rect.height().abs() as u32,
+	    // clear the window for the screen capture 
+            if !page_data.window_cleared {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    Color::TRANSPARENT,
+                    None,
+                    &screen_rect,
                 );
-                background(scene, screen_rect, Color::rgba8(16, 16, 16, 255));
-                draw_center_img(scene, screen_rect, image);
-                spinner(scene, screen_rect, time.elapsed().as_secs_f64());
+                page_data.window_cleared = true;
+                return;
+            }
+
+	    // return if the new window not created yet
+            if !page_data.window_created {
+                return;
+            }
+
+	    // Get the transformation for the image and scene elements
+            let img_width = page_data.rect.width().abs();
+            let img_height = page_data.rect.height().abs();
+            let image = Image::new(
+                page_data.blob.clone(),
+                Rgba8,
+                img_width as u32,
+                img_height as u32,
+            );
+            let scale = (state.screen_width / img_width).min(state.screen_height / img_height);
+            let iw = img_width * scale;
+            let ih = img_height * scale;
+            let transform = Affine::translate((
+                (state.screen_width - iw) / 2.0,
+                (state.screen_height - ih) / 2.0,
+            )) * Affine::scale(scale);
+
+            background(scene, screen_rect, Color::rgba8(16, 16, 16, 255));
+            scene.draw_image(&image, transform);
+
+            if !page_data.extracted {
+                state.redraw = true;
+                spinner(scene, screen_rect, page_data.time.elapsed().as_secs_f64());
+                let mut static_elems = EXTRACTED_ELEMS.lock().unwrap();
+                if let Some((ref rects, ref extracted_text)) = *static_elems {
+                    view.elems.push(ViewElement {
+                        bound: screen_rect,
+                        active: true,
+			cursor: CursorIcon::Crosshair,
+                        ..Default::default()
+                    });
+                    for _ in 0..rects.len() {
+                        view.elems.push(ViewElement {
+                            active: true,
+                            cursor: CursorIcon::Text,
+                            ..Default::default()
+                        });
+                    }
+		    let mut ctx = ClipboardContext::new().unwrap();
+		    ctx.set_contents(extracted_text.to_owned()).unwrap();
+                    // page_data.text = extracted_text.to_string();
+                    page_data.rotated_rects = rects.to_vec();
+                    page_data.extracted = true;
+                    *static_elems = None;
+                }
+                return;
+            }
+            let fill_color = Color::rgba8(0, 116, 255, 50);
+            for (i, rotated_rect) in page_data.rotated_rects.iter().enumerate() {
+                let rect = Rect::from(rotated_rect);
+                let [scale, _, _, _, trans_x, trans_y] = transform.as_coeffs();
+                let trans_scale = TranslateScale::new((trans_x, trans_y).into(), scale);
+                let bound = trans_scale * rect;
+                // the view elements start with the screen rectangle then the text rectangles
+                view.elems[i + 1].bound = bound;
+                if view.elems[i + 1].mouse_enter {
+                    scene.fill(
+                        Fill::NonZero,
+                        transform,
+                        Color::rgba8(0, 116, 255, 90),
+                        None,
+                        &rect,
+                    );
+                }
+                scene.fill(Fill::NonZero, transform, fill_color, None, rotated_rect);
             }
         }
     }
@@ -153,7 +214,7 @@ fn background(scene: &mut Scene, rect: Rect, color: Color) {
     scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
 }
 
-fn selection_rect(scene: &mut Scene, rect: Rect) {
+fn area_selection_rect(scene: &mut Scene, rect: Rect) {
     let fill_color = Color::rgba8(175, 175, 175, 20);
     let stroke_color = Color::WHITE;
     scene.fill(Fill::EvenOdd, Affine::IDENTITY, fill_color, None, &rect);
@@ -231,20 +292,24 @@ fn confirm_btn(scene: &mut Scene, elem: ViewElement) {
 }
 
 fn spinner(scene: &mut Scene, rect: Rect, time: f64) {
-    let fill_color = Color::WHITE;
-    let spinner = CircleSegment::new(rect.center(), 30.0, 25.0, 3.0 * time, 3.0 * PI / 2.0);
-    scene.fill(Fill::NonZero, Affine::IDENTITY, fill_color, None, &spinner);
-}
-
-fn draw_center_img(scene: &mut Scene, rect: Rect, img: Image) {
-    let w = rect.width().abs();
-    let h = rect.height().abs();
-    let scale = (w / img.width as f64).min(h / img.height as f64);
-    let iw = img.width as f64 * scale;
-    let ih = img.height as f64 * scale;
-    let transform = Affine::translate(((w - iw) / 2.0, (h - ih) / 2.0))
-	* Affine::scale(scale);
-    scene.draw_image(&img, transform);
+    let spinner_fill_color = Color::WHITE;
+    let background_fill_color = Color::BLACK;
+    let spinner = CircleSegment::new(rect.center(), 15.0, 11.0, 3.0 * time, 3.0 * PI / 2.0);
+    let background = Rect::from_center_size(rect.center(), (80.0, 80.0)).to_rounded_rect(5.0);
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        background_fill_color,
+        None,
+        &background,
+    );
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        spinner_fill_color,
+        None,
+        &spinner,
+    );
 }
 
 fn to_font_ref(font: &Font) -> Option<FontRef<'_>> {
@@ -264,4 +329,104 @@ fn clamp_width(rect: &mut Rect, min: f64, max: f64) {
 fn clamp_height(rect: &mut Rect, min: f64, max: f64) {
     rect.y0 = rect.y0.clamp(min, max);
     rect.y1 = rect.y1.clamp(min, max);
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RotatedRect {
+    pub p0: Point,
+    pub p1: Point,
+    pub p2: Point,
+    pub p3: Point,
+}
+
+impl RotatedRect {
+    fn min_x(&self) -> f64 {
+        self.p0.x.min(self.p1.x).min(self.p2.x).min(self.p3.x)
+    }
+
+    fn min_y(&self) -> f64 {
+        self.p0.y.min(self.p1.y).min(self.p2.y).min(self.p3.y)
+    }
+
+    fn max_x(&self) -> f64 {
+        self.p0.x.max(self.p1.x).max(self.p2.x).max(self.p3.x)
+    }
+
+    fn max_y(&self) -> f64 {
+        self.p0.y.max(self.p1.y).max(self.p2.y).max(self.p3.y)
+    }
+}
+
+pub struct RotatedRectIter {
+    pub rect: RotatedRect,
+    pub idx: usize,
+}
+
+impl Iterator for RotatedRectIter {
+    type Item = PathEl;
+
+    fn next(&mut self) -> Option<PathEl> {
+        self.idx += 1;
+        match self.idx {
+            1 => Some(PathEl::MoveTo(self.rect.p0)),
+            2 => Some(PathEl::LineTo(self.rect.p1)),
+            3 => Some(PathEl::LineTo(self.rect.p2)),
+            4 => Some(PathEl::LineTo(self.rect.p3)),
+            5 => Some(PathEl::ClosePath),
+            _ => None,
+        }
+    }
+}
+
+impl vello::kurbo::Shape for RotatedRect {
+    type PathElementsIter<'iter> = RotatedRectIter;
+
+    fn path_elements(&self, _tolerance: f64) -> RotatedRectIter {
+        RotatedRectIter {
+            rect: *self,
+            idx: 0,
+        }
+    }
+
+    #[inline]
+    fn area(&self) -> f64 {
+        (self.p0.x - self.p3.x) * (self.p0.y - self.p3.y)
+    }
+
+    #[inline]
+    fn perimeter(&self, _accuracy: f64) -> f64 {
+        2.0 * ((self.p3.x - self.p0.x) + (self.p3.y - self.p0.y))
+    }
+
+    #[inline]
+    fn winding(&self, pt: Point) -> i32 {
+        if pt.x >= self.p0.x && pt.x < self.p3.x && pt.y >= self.p0.y && pt.y < self.p3.y {
+            1
+        } else {
+            0
+        }
+    }
+
+    #[inline]
+    fn bounding_box(&self) -> Rect {
+        Rect::from_points(self.p0, self.p3)
+    }
+}
+
+impl From<rten_imageproc::RotatedRect> for RotatedRect {
+    fn from(value: rten_imageproc::RotatedRect) -> RotatedRect {
+        let corners = value.corners();
+        let mut new_corners = [Point::ZERO; 4];
+        for (i, point) in corners.iter().enumerate() {
+            new_corners[i] = Point::new(point.x as f64, point.y as f64);
+        }
+        let [p0, p1, p2, p3] = new_corners;
+        RotatedRect { p0, p1, p2, p3 }
+    }
+}
+
+impl From<&RotatedRect> for Rect {
+    fn from(value: &RotatedRect) -> Rect {
+        Rect::new(value.min_x(), value.min_y(), value.max_x(), value.max_y())
+    }
 }
