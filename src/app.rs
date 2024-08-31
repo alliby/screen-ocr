@@ -36,7 +36,17 @@ pub struct App<'s> {
     // the App states
     pub view: View,
     pub state: AppState,
-    pub callbacks: Vec<fn(&mut AppState, &mut View)>,
+    pub callbacks: Vec<fn(&mut AppState, &mut View, usize)>,
+}
+
+impl<'s> App<'s> {
+    #[inline]
+    fn callback(&self, index: usize) -> fn(&mut AppState, &mut View, usize) {
+        match self.state.page {
+            Page::AreaSelect => self.callbacks[index],
+            Page::TextExtract => self.callbacks[0],
+        }
+    }
 }
 
 impl<'s> ApplicationHandler for App<'s> {
