@@ -6,10 +6,10 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 copypasta = "0.10.1"
-ocrs = "0.8.0"
+ocrs = "0.8.1"
 pollster = "0.3.0"
-rten = "0.10.0"
-rten-imageproc = "0.10.0"
+rten = "0.13.1"
+rten-imageproc = "0.13.1"
 vello = "0.2.1"
 winit = { version = "0.30", features = ["rwh_06"]}
 
