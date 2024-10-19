@@ -63,7 +63,7 @@ pub enum Page {
 pub struct AreaSelectData {
     pub grab: Option<Point>,
     pub resize: Option<usize>,
-    pub rect: Rect
+    pub rect: Rect,
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +81,7 @@ pub struct TextExtractData {
 #[derive(Debug, Clone)]
 pub enum PageData {
     AreaSelect(AreaSelectData),
-    TextExtract(TextExtractData)
+    TextExtract(TextExtractData),
 }
 
 impl Default for PageData {
@@ -149,8 +149,8 @@ impl AppState {
                         time: Instant::now(),
                         window_cleared: false,
                         window_created: false,
-			rotated_rects: Vec::new(),
-			text: String::new(),
+                        rotated_rects: Vec::new(),
+                        text: String::new(),
                         extracted: false,
                         blob: Blob::new(Arc::new([])),
                     }));
@@ -159,9 +159,9 @@ impl AppState {
                 // Resize Buttons Callbacks
                 for _ in TOP_LEFT_BTN..=BOTTOM_LEFT_BTN {
                     callbacks.push(|state, view, index| {
-			let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
+                        let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
                             return;
-			};
+                        };
 
                         if page_data.resize.is_none() {
                             page_data.resize = Some(index);
@@ -174,11 +174,9 @@ impl AppState {
                 // return the callbacks vec
                 callbacks
             }
-            Page::TextExtract => vec![
-		|_, _, index| {
-		    println!("input on {index}");
-		}
-	    ],
+            Page::TextExtract => vec![|_, _, index| {
+                println!("input on {index}");
+            }],
         }
     }
 

@@ -16,7 +16,8 @@ pub fn screen_rect(rect: Rect) -> Result<Blob<u8>> {
         rect.width().abs() as u16,
         rect.height().abs() as u16,
     );
-    let reply = xproto::get_image(&conn, ImageFormat::Z_PIXMAP, root, x, y, w, h, u32::MAX)?.reply()?;
+    let reply =
+        xproto::get_image(&conn, ImageFormat::Z_PIXMAP, root, x, y, w, h, u32::MAX)?.reply()?;
 
     let data = reply.data.into_boxed_slice();
     Ok(Blob::new(Arc::new(data)))

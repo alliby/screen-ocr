@@ -121,7 +121,7 @@ pub fn draw(state: &mut AppState, view: &mut View) {
             };
             let screen_rect = Rect::new(0.0, 0.0, state.screen_width, state.screen_height);
 
-	    // clear the window for the screen capture 
+            // clear the window for the screen capture
             if !page_data.window_cleared {
                 scene.fill(
                     Fill::NonZero,
@@ -134,12 +134,12 @@ pub fn draw(state: &mut AppState, view: &mut View) {
                 return;
             }
 
-	    // return if the new window not created yet
+            // return if the new window not created yet
             if !page_data.window_created {
                 return;
             }
 
-	    // Get the transformation for the image and scene elements
+            // Get the transformation for the image and scene elements
             let img_width = page_data.rect.width().abs();
             let img_height = page_data.rect.height().abs();
             let image = Image::new(
@@ -167,7 +167,7 @@ pub fn draw(state: &mut AppState, view: &mut View) {
                     view.elems.push(ViewElement {
                         bound: screen_rect,
                         active: true,
-			cursor: CursorIcon::Crosshair,
+                        cursor: CursorIcon::Crosshair,
                         ..Default::default()
                     });
                     for _ in 0..rects.len() {
@@ -177,8 +177,8 @@ pub fn draw(state: &mut AppState, view: &mut View) {
                             ..Default::default()
                         });
                     }
-		    let mut ctx = ClipboardContext::new().unwrap();
-		    ctx.set_contents(extracted_text.to_owned()).unwrap();
+                    let mut ctx = ClipboardContext::new().unwrap();
+                    ctx.set_contents(extracted_text.to_owned()).unwrap();
                     // page_data.text = extracted_text.to_string();
                     page_data.rotated_rects = rects.to_vec();
                     page_data.extracted = true;

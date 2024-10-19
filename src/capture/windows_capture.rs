@@ -43,10 +43,10 @@ pub fn screen_rect(rect: Rect) -> Result<Blob<u8>> {
         // Clean up
         SelectObject(h_dc, h_old);
 
-	// The ok here is for returning Result from BOOL type
+        // The ok here is for returning Result from BOOL type
         DeleteObject(h_bitmap).ok()?;
         DeleteDC(h_dc).ok()?;
-	
+
         ReleaseDC(HWND(0), h_screen);
         Ok(Blob::new(Arc::new(buffer)))
     }

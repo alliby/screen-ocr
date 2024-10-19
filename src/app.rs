@@ -103,7 +103,10 @@ impl<'s> ApplicationHandler for App<'s> {
             if page_data.window_cleared && !page_data.window_created {
                 // Capture the screen after clearing the overlay
                 page_data.blob = capture::screen_rect(page_data.rect).unwrap();
-                let dim = (page_data.rect.width().abs() as u32, page_data.rect.height().abs() as u32);
+                let dim = (
+                    page_data.rect.width().abs() as u32,
+                    page_data.rect.height().abs() as u32,
+                );
                 let img_blob = page_data.blob.clone();
                 std::thread::spawn(move || extract_text(img_blob, dim));
                 // Create a new window

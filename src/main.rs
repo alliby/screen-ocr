@@ -1,7 +1,7 @@
 pub mod app;
+pub mod capture;
 pub mod scenes;
 pub mod state;
-pub mod capture;
 
 use anyhow::Result;
 use vello::util::RenderContext;
