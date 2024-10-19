@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 
-use vello::glyph::Glyph;
 use vello::kurbo::{Affine, CircleSegment, PathEl, Point, Rect, Stroke, TranslateScale};
 use vello::peniko::{Blob, Color, Fill, Font, Format::*, Image};
 use vello::skrifa::instance::LocationRef;
 use vello::skrifa::raw::FontRef;
 use vello::skrifa::MetadataProvider;
-use vello::Scene;
+use vello::{Glyph, Scene};
 
 use winit::window::CursorIcon;
 
@@ -253,7 +252,7 @@ fn confirm_btn(scene: &mut Scene, elem: ViewElement) {
         let x = pen_x;
         pen_x += advance;
         *glyph = Glyph {
-            id: gid.to_u16() as u32,
+            id: gid.to_u32(),
             x,
             y: 0.0,
         };

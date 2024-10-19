@@ -10,19 +10,25 @@ ocrs = "0.8.1"
 pollster = "0.3.0"
 rten = "0.13.1"
 rten-imageproc = "0.13.1"
-vello = "0.2.1"
+vello = "0.3.0"
 winit = { version = "0.30", features = ["rwh_06"]}
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.57.0", features = [
+windows = { version = "0.52.0", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = "s"
 
 [profile.dev.package.ocrs]
 opt-level = 3
@@ -30,7 +36,8 @@ opt-level = 3
 [profile.dev.package.rten]
 opt-level = 3
 
-[profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"
+[profile.release.package.ocrs]
+opt-level = 3
+
+[profile.release.package.rten]
+opt-level = 3
