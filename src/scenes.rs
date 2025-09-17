@@ -1,17 +1,19 @@
 use crate::state::*;
 use std::f64::consts::PI;
 use std::sync::Arc;
+use std::time::{Instant, Duration};
 
-use copypasta::{ClipboardContext, ClipboardProvider};
+use arboard::Clipboard;
+#[cfg(target_os = "linux")]
+use arboard::SetExtLinux;
 
-use vello::kurbo::{Affine, CircleSegment, PathEl, Point, Rect, Stroke, TranslateScale};
-use vello::peniko::{Blob, Color, Fill, Font, Format::*, Image};
+use vello::kurbo::{Affine, CircleSegment, Rect, Stroke};
+use vello::peniko::{Blob, Color, Fill, Font};
 use vello::skrifa::instance::LocationRef;
 use vello::skrifa::raw::FontRef;
 use vello::skrifa::MetadataProvider;
 use vello::{Glyph, Scene};
 
-use winit::window::CursorIcon;
 
 const ROBOTO_FONT: &[u8] = include_bytes!("../assets/Roboto-Regular.ttf");
 
@@ -119,92 +121,41 @@ pub fn draw(state: &mut AppState, view: &mut View) {
             let PageData::TextExtract(ref mut page_data) = state.page_data else {
                 return;
             };
+            state.redraw = true;
+
             let screen_rect = Rect::new(0.0, 0.0, state.screen_width, state.screen_height);
 
             // clear the window for the screen capture
-            if !page_data.window_cleared {
-                scene.fill(
+	    if !page_data.window_cleared {
+		scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
                     Color::TRANSPARENT,
                     None,
                     &screen_rect,
-                );
-                page_data.window_cleared = true;
-                return;
-            }
+		);
+		page_data.window_cleared = true;
+		return;
+	    }
 
-            // return if the new window not created yet
-            if !page_data.window_created {
-                return;
-            }
+            let extracted_text = EXTRACTED_TEXT.lock().unwrap();
+	    if let Some(ref text) = *extracted_text {
+		println!("{text}");
+		let mut clipboard = Clipboard::new().unwrap();
 
-            // Get the transformation for the image and scene elements
-            let img_width = page_data.rect.width().abs();
-            let img_height = page_data.rect.height().abs();
-            let image = Image::new(
-                page_data.blob.clone(),
-                Rgba8,
-                img_width as u32,
-                img_height as u32,
-            );
-            let scale = (state.screen_width / img_width).min(state.screen_height / img_height);
-            let iw = img_width * scale;
-            let ih = img_height * scale;
-            let transform = Affine::translate((
-                (state.screen_width - iw) / 2.0,
-                (state.screen_height - ih) / 2.0,
-            )) * Affine::scale(scale);
+		if cfg!(target_os = "linux") {
+		    let timeout = Instant::now() + Duration::from_millis(500);
+		    clipboard.set().wait_until(timeout).text(text.to_owned()).unwrap();
+		} else {
+		    clipboard.set_text(text.to_owned()).unwrap();
+		}
 
-            background(scene, screen_rect, Color::rgba8(16, 16, 16, 255));
-            scene.draw_image(&image, transform);
-
-            if !page_data.extracted {
-                state.redraw = true;
+		// exit
+		std::process::exit(0);
+	    } else {
+		background(scene, view.elems[0].bound, Color::rgba8(16, 16, 16, 75));
                 spinner(scene, screen_rect, page_data.time.elapsed().as_secs_f64());
-                let mut static_elems = EXTRACTED_ELEMS.lock().unwrap();
-                if let Some((ref rects, ref extracted_text)) = *static_elems {
-                    view.elems.push(ViewElement {
-                        bound: screen_rect,
-                        active: true,
-                        cursor: CursorIcon::Crosshair,
-                        ..Default::default()
-                    });
-                    for _ in 0..rects.len() {
-                        view.elems.push(ViewElement {
-                            active: true,
-                            cursor: CursorIcon::Text,
-                            ..Default::default()
-                        });
-                    }
-                    let mut ctx = ClipboardContext::new().unwrap();
-                    ctx.set_contents(extracted_text.to_owned()).unwrap();
-                    // page_data.text = extracted_text.to_string();
-                    page_data.rotated_rects = rects.to_vec();
-                    page_data.extracted = true;
-                    *static_elems = None;
-                }
-                return;
-            }
-            let fill_color = Color::rgba8(0, 116, 255, 50);
-            for (i, rotated_rect) in page_data.rotated_rects.iter().enumerate() {
-                let rect = Rect::from(rotated_rect);
-                let [scale, _, _, _, trans_x, trans_y] = transform.as_coeffs();
-                let trans_scale = TranslateScale::new((trans_x, trans_y).into(), scale);
-                let bound = trans_scale * rect;
-                // the view elements start with the screen rectangle then the text rectangles
-                view.elems[i + 1].bound = bound;
-                if view.elems[i + 1].mouse_enter {
-                    scene.fill(
-                        Fill::NonZero,
-                        transform,
-                        Color::rgba8(0, 116, 255, 90),
-                        None,
-                        &rect,
-                    );
-                }
-                scene.fill(Fill::NonZero, transform, fill_color, None, rotated_rect);
-            }
+	    }
         }
     }
 }
@@ -328,104 +279,4 @@ fn clamp_width(rect: &mut Rect, min: f64, max: f64) {
 fn clamp_height(rect: &mut Rect, min: f64, max: f64) {
     rect.y0 = rect.y0.clamp(min, max);
     rect.y1 = rect.y1.clamp(min, max);
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct RotatedRect {
-    pub p0: Point,
-    pub p1: Point,
-    pub p2: Point,
-    pub p3: Point,
-}
-
-impl RotatedRect {
-    fn min_x(&self) -> f64 {
-        self.p0.x.min(self.p1.x).min(self.p2.x).min(self.p3.x)
-    }
-
-    fn min_y(&self) -> f64 {
-        self.p0.y.min(self.p1.y).min(self.p2.y).min(self.p3.y)
-    }
-
-    fn max_x(&self) -> f64 {
-        self.p0.x.max(self.p1.x).max(self.p2.x).max(self.p3.x)
-    }
-
-    fn max_y(&self) -> f64 {
-        self.p0.y.max(self.p1.y).max(self.p2.y).max(self.p3.y)
-    }
-}
-
-pub struct RotatedRectIter {
-    pub rect: RotatedRect,
-    pub idx: usize,
-}
-
-impl Iterator for RotatedRectIter {
-    type Item = PathEl;
-
-    fn next(&mut self) -> Option<PathEl> {
-        self.idx += 1;
-        match self.idx {
-            1 => Some(PathEl::MoveTo(self.rect.p0)),
-            2 => Some(PathEl::LineTo(self.rect.p1)),
-            3 => Some(PathEl::LineTo(self.rect.p2)),
-            4 => Some(PathEl::LineTo(self.rect.p3)),
-            5 => Some(PathEl::ClosePath),
-            _ => None,
-        }
-    }
-}
-
-impl vello::kurbo::Shape for RotatedRect {
-    type PathElementsIter<'iter> = RotatedRectIter;
-
-    fn path_elements(&self, _tolerance: f64) -> RotatedRectIter {
-        RotatedRectIter {
-            rect: *self,
-            idx: 0,
-        }
-    }
-
-    #[inline]
-    fn area(&self) -> f64 {
-        (self.p0.x - self.p3.x) * (self.p0.y - self.p3.y)
-    }
-
-    #[inline]
-    fn perimeter(&self, _accuracy: f64) -> f64 {
-        2.0 * ((self.p3.x - self.p0.x) + (self.p3.y - self.p0.y))
-    }
-
-    #[inline]
-    fn winding(&self, pt: Point) -> i32 {
-        if pt.x >= self.p0.x && pt.x < self.p3.x && pt.y >= self.p0.y && pt.y < self.p3.y {
-            1
-        } else {
-            0
-        }
-    }
-
-    #[inline]
-    fn bounding_box(&self) -> Rect {
-        Rect::from_points(self.p0, self.p3)
-    }
-}
-
-impl From<rten_imageproc::RotatedRect> for RotatedRect {
-    fn from(value: rten_imageproc::RotatedRect) -> RotatedRect {
-        let corners = value.corners();
-        let mut new_corners = [Point::ZERO; 4];
-        for (i, point) in corners.iter().enumerate() {
-            new_corners[i] = Point::new(point.x as f64, point.y as f64);
-        }
-        let [p0, p1, p2, p3] = new_corners;
-        RotatedRect { p0, p1, p2, p3 }
-    }
-}
-
-impl From<&RotatedRect> for Rect {
-    fn from(value: &RotatedRect) -> Rect {
-        Rect::new(value.min_x(), value.min_y(), value.max_x(), value.max_y())
-    }
 }

@@ -1,5 +1,3 @@
-use crate::scenes::RotatedRect;
-
 use vello::kurbo::{Point, Rect};
 use vello::peniko::Blob;
 use vello::Scene;
@@ -7,7 +5,7 @@ use vello::Scene;
 use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
 use rten::Model;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use winit::window::CursorIcon;
@@ -23,7 +21,7 @@ pub const BOTTOM_RIGHT_BTN: usize = 5;
 pub const BOTTOM_LEFT_BTN: usize = 6;
 
 // Text Extraction elements
-pub static EXTRACTED_ELEMS: Mutex<Option<(Vec<RotatedRect>, String)>> = Mutex::new(None);
+pub static EXTRACTED_TEXT: Mutex<Option<String>> = Mutex::new(None);
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct ViewElement {
@@ -70,14 +68,8 @@ pub struct AreaSelectData {
 pub struct TextExtractData {
     pub rect: Rect,
     pub time: Instant,
-    pub extracted: bool,
+    pub extracting: bool,
     pub window_cleared: bool,
-    pub window_created: bool,
-    pub text_selected: bool,
-    pub text: String,
-    pub rotated_rects: Vec<RotatedRect>,
-    pub selected_idx: (usize, usize),
-    pub blob: Blob<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -147,16 +139,10 @@ impl AppState {
                     state.redraw = true;
                     state.page = Page::TextExtract;
                     state.page_data = PageData::TextExtract(TextExtractData {
-                        rect: page_data.rect,
+			rect: page_data.rect,
                         time: Instant::now(),
+			extracting: false,
                         window_cleared: false,
-                        window_created: false,
-			text_selected: false,
-                        rotated_rects: Vec::new(),
-                        text: String::new(),
-                        extracted: false,
-			selected_idx: (0, 0),
-                        blob: Blob::new(Arc::new([])),
                     });
                 });
 
@@ -178,9 +164,7 @@ impl AppState {
                 // return the callbacks vec
                 callbacks
             }
-            Page::TextExtract => vec![|_, _, index| {
-                println!("input on {index}");
-            }],
+            Page::TextExtract => vec![],
         }
     }
 
@@ -210,8 +194,18 @@ impl AppState {
                 // return the views vec
                 views
             }
-            Page::TextExtract => vec![],
-        }
+
+            Page::TextExtract => vec![
+		// full screen overlay
+                ViewElement {
+                    cursor: CursorIcon::Crosshair,
+                    bound: Rect::new(0.0, 0.0, self.screen_width, self.screen_height),
+                    active: true,
+                    ..Default::default()
+                }
+	    ]
+
+	}
     }
 }
 
@@ -235,14 +229,7 @@ pub fn extract_text(blob: Blob<u8>, dimensions: (u32, u32)) {
     .unwrap();
     let img_source = ImageSource::from_bytes(blob.data(), dimensions).unwrap();
     let ocr_input = engine.prepare_input(img_source).unwrap();
-    let word_rects = engine.detect_words(&ocr_input).unwrap();
-    // sort the words in lines and then flatten the lines into words again
-    let rects = engine
-        .find_text_lines(&ocr_input, &word_rects)
-        .into_iter()
-        .flatten()
-        .map(RotatedRect::from);
     let text = engine.get_text(&ocr_input).unwrap();
-    let mut extracted = EXTRACTED_ELEMS.lock().unwrap();
-    *extracted = Some((rects.collect(), text));
+    let mut extracted = EXTRACTED_TEXT.lock().unwrap();
+    *extracted = Some(text);
 }

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
-copypasta = "0.10.1"
+arboard = { version = "3.6.1", default-features = false }
 ocrs = "0.8.1"
 pollster = "0.3.0"
 rten = "0.13.1"
