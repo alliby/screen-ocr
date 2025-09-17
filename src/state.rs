@@ -44,7 +44,7 @@ pub struct View {
 #[derive(Default, Clone)]
 pub struct AppState {
     pub page: Page,
-    pub page_data: Box<PageData>,
+    pub page_data: PageData,
     pub redraw: bool,
     pub damaged: bool,
     pub should_exit: bool,
@@ -73,8 +73,10 @@ pub struct TextExtractData {
     pub extracted: bool,
     pub window_cleared: bool,
     pub window_created: bool,
+    pub text_selected: bool,
     pub text: String,
     pub rotated_rects: Vec<RotatedRect>,
+    pub selected_idx: (usize, usize),
     pub blob: Blob<u8>,
 }
 
@@ -99,7 +101,7 @@ impl AppState {
                 // the full screen overlay
                 callbacks.push(|state, view, _| {
                     let mouse = view.mouse_position;
-                    let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
+                    let PageData::AreaSelect(ref mut page_data) = state.page_data else {
                         return;
                     };
                     // if no press the second call is for the mouse released
@@ -124,7 +126,7 @@ impl AppState {
                 // for the selected rect
                 callbacks.push(|state, view, _| {
                     let mouse = view.mouse_position;
-                    let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
+                    let PageData::AreaSelect(ref mut page_data) = state.page_data else {
                         return;
                     };
 
@@ -138,28 +140,30 @@ impl AppState {
 
                 // for the confirm button
                 callbacks.push(|state, _, _| {
-                    let PageData::AreaSelect(ref page_data) = *state.page_data else {
+                    let PageData::AreaSelect(ref page_data) = state.page_data else {
                         return;
                     };
                     state.damaged = true;
                     state.redraw = true;
                     state.page = Page::TextExtract;
-                    state.page_data = Box::new(PageData::TextExtract(TextExtractData {
+                    state.page_data = PageData::TextExtract(TextExtractData {
                         rect: page_data.rect,
                         time: Instant::now(),
                         window_cleared: false,
                         window_created: false,
+			text_selected: false,
                         rotated_rects: Vec::new(),
                         text: String::new(),
                         extracted: false,
+			selected_idx: (0, 0),
                         blob: Blob::new(Arc::new([])),
-                    }));
+                    });
                 });
 
                 // Resize Buttons Callbacks
                 for _ in TOP_LEFT_BTN..=BOTTOM_LEFT_BTN {
                     callbacks.push(|state, view, index| {
-                        let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
+                        let PageData::AreaSelect(ref mut page_data) = state.page_data else {
                             return;
                         };
 

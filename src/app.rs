@@ -99,7 +99,7 @@ impl<'s> ApplicationHandler for App<'s> {
             return;
         }
 
-        if let PageData::TextExtract(ref mut page_data) = *self.state.page_data {
+        if let PageData::TextExtract(ref mut page_data) = self.state.page_data {
             if page_data.window_cleared && !page_data.window_created {
                 // Capture the screen after clearing the overlay
                 page_data.blob = capture::screen_rect(page_data.rect).unwrap();

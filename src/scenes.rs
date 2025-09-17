@@ -20,7 +20,7 @@ pub fn draw(state: &mut AppState, view: &mut View) {
     match state.page {
         Page::AreaSelect => {
             let mouse = view.mouse_position;
-            let PageData::AreaSelect(ref mut page_data) = *state.page_data else {
+            let PageData::AreaSelect(ref mut page_data) = state.page_data else {
                 return;
             };
 
@@ -116,7 +116,7 @@ pub fn draw(state: &mut AppState, view: &mut View) {
         }
 
         Page::TextExtract => {
-            let PageData::TextExtract(ref mut page_data) = *state.page_data else {
+            let PageData::TextExtract(ref mut page_data) = state.page_data else {
                 return;
             };
             let screen_rect = Rect::new(0.0, 0.0, state.screen_width, state.screen_height);
