@@ -30,7 +30,7 @@ Pre-built binaries for Windows and Linux are available on the [GitHub Releases p
 
 ## Contributing
 
-Contributions are welcome! If you have any bug reports, feature requests, or want to contribute code, please feel free to open an issue or submit a pull request on the [GitHub repository](https://github.com/alliby/screen-ocr).
+Contributions are welcome! If you have any bug reports, feature requests, or want to contribute code, please feel free to open an issue or submit a pull request.
 
 ## License
 
