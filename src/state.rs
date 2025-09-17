@@ -211,10 +211,18 @@ impl AppState {
     }
 }
 
+const TEXT_DETECTION_SLICE: &'static [u8] = include_bytes!(
+    concat!(env!("CARGO_MANIFEST_DIR"), "/assets/text-detection.rten")
+);
+
+const TEXT_RECOGNITION_SLICE: &'static [u8] = include_bytes!(
+    concat!(env!("CARGO_MANIFEST_DIR"), "/assets/text-recognition.rten")
+);
+
 // Extract Text from image bytes and write it to the global Cell
 pub fn extract_text(blob: Blob<u8>, dimensions: (u32, u32)) {
-    let detection_model = Model::load_file("assets/text-detection.rten").unwrap();
-    let recognition_model = Model::load_file("assets/text-recognition.rten").unwrap();
+    let detection_model = Model::load_static_slice(TEXT_DETECTION_SLICE).unwrap();
+    let recognition_model = Model::load_static_slice(TEXT_RECOGNITION_SLICE).unwrap();
     let engine = OcrEngine::new(OcrEngineParams {
         detection_model: Some(detection_model),
         recognition_model: Some(recognition_model),
