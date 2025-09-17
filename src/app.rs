@@ -8,7 +8,7 @@ use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
 use vello::{AaConfig, Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;
-use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowLevel};
@@ -20,9 +20,6 @@ use winit::platform::windows::WindowAttributesExtWindows;
 use winit::platform::x11::WindowAttributesExtX11;
 
 use vello::wgpu;
-
-const OVERLAY_WINDOW: usize = 0;
-const EXTRACT_WINDOW: usize = 1;
 
 pub struct App<'s> {
     // The vello RenderContext which is a global context that lasts for the
@@ -100,23 +97,25 @@ impl<'s> ApplicationHandler for App<'s> {
         }
 
         if let PageData::TextExtract(ref mut page_data) = self.state.page_data {
-            if page_data.window_cleared && !page_data.window_created {
+            if page_data.window_cleared && !page_data.extracting {
                 // Capture the screen after clearing the overlay
-                page_data.blob = capture::screen_rect(page_data.rect).unwrap();
+		let page_rect = page_data.rect;
                 let dim = (
-                    page_data.rect.width().abs() as u32,
-                    page_data.rect.height().abs() as u32,
+                    page_rect.width().abs() as u32,
+                    page_rect.height().abs() as u32,
                 );
-                let img_blob = page_data.blob.clone();
-                std::thread::spawn(move || extract_text(img_blob, dim));
-                // Create a new window
-                self.windows[OVERLAY_WINDOW].set_visible(false);
-                let window = Arc::new(create_main_window(event_loop));
-                let surface = create_vello_surface(window.clone(), &mut self.context);
-                self.surfaces.push(surface);
-                self.windows.push(window.clone());
-                self.active = EXTRACT_WINDOW;
-                page_data.window_created = true;
+                std::thread::spawn(move || {
+                    let blob = match capture::screen_rect(page_rect) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("Error capturing screen: {}. Please ensure your display server is running and you have the necessary permissions.", e);
+                            // TODO: Update app state to display error to user
+                            return;
+                        }
+                    };
+		    extract_text(blob, dim)
+		});
+		page_data.extracting = true;
             }
         }
 
@@ -154,7 +153,7 @@ impl<'s> ApplicationHandler for App<'s> {
                 let surface_texture = surface
                     .surface
                     .get_current_texture()
-                    .expect("failed to get surface texture");
+                    .expect("Failed to get surface texture. This might indicate a graphics driver issue or an invalid display configuration.");
 
                 // Render to the surface's texture
                 self.renderers[surface.dev_id]
@@ -172,7 +171,7 @@ impl<'s> ApplicationHandler for App<'s> {
                             antialiasing_method: AaConfig::Msaa8,
                         },
                     )
-                    .expect("failed to render to surface");
+                    .expect("Failed to render to surface. This could be due to an unsupported graphics configuration or a rendering error.");
 
                 // Queue the texture to be presented on the surface
                 surface_texture.present();
@@ -219,21 +218,12 @@ impl<'s> ApplicationHandler for App<'s> {
     }
 }
 
-fn create_main_window(event_loop: &ActiveEventLoop) -> Window {
-    let attr = Window::default_attributes()
-        .with_window_level(WindowLevel::AlwaysOnTop)
-        .with_min_inner_size(PhysicalSize::new(400.0, 100.0))
-        .with_title("Screen OCR");
-
-    event_loop.create_window(attr).unwrap()
-}
-
 fn create_overlay_window(event_loop: &ActiveEventLoop) -> Window {
     // TODO: better way for muliple monitors
     let screen_size = event_loop
         .primary_monitor()
         .map(|monitor| monitor.size())
-        .expect("Cannot get the primary monitor");
+        .expect("Failed to get the primary monitor. Please ensure a monitor is connected and properly configured.");
 
     let mut attr = Window::default_attributes()
         .with_window_level(WindowLevel::AlwaysOnTop)
@@ -275,7 +265,7 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface) -> 
             num_init_threads: NonZeroUsize::new(1),
         },
     )
-    .expect("Couldn't create renderer")
+    .expect("Failed to create Vello renderer. Ensure your graphics drivers are up to date and your hardware supports the necessary features.")
 }
 
 fn create_vello_surface<'s, 'c>(
@@ -290,5 +280,5 @@ fn create_vello_surface<'s, 'c>(
         size.height,
         wgpu::PresentMode::AutoVsync,
     );
-    pollster::block_on(surface_future).expect("Error creating surface")
+    pollster::block_on(surface_future).expect("Error creating Vello surface. This might be due to an invalid window or display configuration.")
 }
