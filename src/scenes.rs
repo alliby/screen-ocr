@@ -143,12 +143,14 @@ pub fn draw(state: &mut AppState, view: &mut View) {
 		println!("{text}");
 		let mut clipboard = Clipboard::new().unwrap();
 
-		if cfg!(target_os = "linux") {
+		#[cfg(target_os = "linux")]
+		{
 		    let timeout = Instant::now() + Duration::from_millis(500);
 		    clipboard.set().wait_until(timeout).text(text.to_owned()).unwrap();
-		} else {
-		    clipboard.set_text(text.to_owned()).unwrap();
 		}
+
+		#[cfg(target_os = "windows")]
+		clipboard.set_text(text.to_owned()).unwrap();
 
 		// exit
 		std::process::exit(0);
