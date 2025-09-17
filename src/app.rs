@@ -16,6 +16,9 @@ use winit::window::{Window, WindowLevel};
 #[cfg(target_os = "windows")]
 use winit::platform::windows::WindowAttributesExtWindows;
 
+#[cfg(target_os = "windows")]
+use winit::dpi::PhysicalSize;
+
 #[cfg(target_os = "linux")]
 use winit::platform::x11::WindowAttributesExtX11;
 

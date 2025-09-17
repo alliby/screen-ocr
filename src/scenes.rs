@@ -1,9 +1,12 @@
 use crate::state::*;
 use std::f64::consts::PI;
 use std::sync::Arc;
+
+#[cfg(target_os = "linux")]
 use std::time::{Instant, Duration};
 
 use arboard::Clipboard;
+
 #[cfg(target_os = "linux")]
 use arboard::SetExtLinux;
 
