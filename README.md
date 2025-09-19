@@ -1,5 +1,7 @@
 # screen-ocr
 
+![screen-ocr](screen-ocr.gif)
+
 `screen-ocr` is a Rust-based application for performing Optical Character Recognition (OCR) directly from your screen. It allows users to select an area of their screen and extract text from it, providing a convenient way to digitize text from images or non-selectable areas. Supports both Windows and Linux operating systems.
 
 ## Installation
